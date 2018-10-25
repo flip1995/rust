@@ -280,6 +280,7 @@ pub struct Handler {
     pub flags: HandlerFlags,
 
     err_count: AtomicUsize,
+    lint_err_count: AtomicUsize,
     emitter: Lock<Box<dyn Emitter + sync::Send>>,
     continue_after_error: LockCell<bool>,
     delayed_span_bugs: Lock<Vec<Diagnostic>>,
@@ -379,6 +380,7 @@ impl Handler {
         Handler {
             flags,
             err_count: AtomicUsize::new(0),
+            lint_err_count: AtomicUsize::new(0),
             emitter: Lock::new(e),
             continue_after_error: LockCell::new(true),
             delayed_span_bugs: Lock::new(Vec::new()),
@@ -401,6 +403,7 @@ impl Handler {
         // actually frees the underlying memory (which `clear` would not do)
         *self.emitted_diagnostics.borrow_mut() = Default::default();
         self.err_count.store(0, SeqCst);
+        self.lint_err_count.store(0, SeqCst);
     }
 
     pub fn struct_dummy<'a>(&'a self) -> DiagnosticBuilder<'a> {
@@ -608,8 +611,17 @@ impl Handler {
         self.err_count.fetch_add(1, SeqCst);
     }
 
+    fn bump_lint_err_count(&self) {
+        self.panic_if_treat_err_as_bug();
+        self.lint_err_count.fetch_add(1, SeqCst);
+    }
+
     pub fn err_count(&self) -> usize {
-        self.err_count.load(SeqCst)
+        self.err_count.load(SeqCst) + self.lint_err_count.load(SeqCst)
+    }
+
+    fn lint_err_count(&self) -> usize {
+        self.lint_err_count.load(SeqCst)
     }
 
     pub fn has_errors(&self) -> bool {
@@ -656,11 +668,18 @@ impl Handler {
     }
 
     pub fn abort_if_errors(&self) {
-        if self.err_count() == 0 {
+        if self.err_count() - self.lint_err_count() == 0 {
             return;
         }
         FatalError.raise();
     }
+    pub fn abort_if_lint_errors(&self) {
+        if self.lint_err_count() == 0 {
+            return;
+        }
+        FatalError.raise();
+    }
+
     pub fn emit(&self, msp: &MultiSpan, msg: &str, lvl: Level) {
         if lvl == Warning && !self.flags.can_emit_warnings {
             return;
@@ -721,7 +740,11 @@ impl Handler {
         if self.emitted_diagnostics.borrow_mut().insert(diagnostic_hash) {
             self.emitter.borrow_mut().emit(db);
             if db.is_error() {
-                self.bump_err_count();
+                if db.is_lint() {
+                    self.bump_lint_err_count();
+                } else {
+                    self.bump_err_count();
+                }
             }
         }
     }

@@ -429,6 +429,13 @@ impl Diagnostic {
         self.children.push(sub);
     }
 
+    pub(crate) fn is_lint(&self) -> {
+        if let Some(DiagnosticId::Lint(_)) = self.code {
+            true
+        }
+        false
+    }
+
     /// Convenience function for internal use, clients should use one of the
     /// public methods above.
     fn sub_with_highlights(&mut self,

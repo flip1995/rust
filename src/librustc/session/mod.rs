@@ -311,6 +311,9 @@ impl Session {
     pub fn abort_if_errors(&self) {
         self.diagnostic().abort_if_errors();
     }
+    pub fn abort_if_lint_errors(&self) {
+        self.diagnostic().abort_if_lint_errors();
+    }
     pub fn compile_status(&self) -> Result<(), CompileIncomplete> {
         compile_result_from_err_count(self.err_count())
     }
