@@ -120,6 +120,7 @@ pub fn get_reloc_model(sess: &Session) -> llvm::RelocMode {
             sess.err(&format!("{:?} is not a valid relocation mode",
                               reloc_model_arg));
             sess.abort_if_errors();
+            sess.abort_if_lint_errors();
             bug!();
         }
     }
@@ -138,6 +139,7 @@ fn get_tls_model(sess: &Session) -> llvm::ThreadLocalMode {
             sess.err(&format!("{:?} is not a valid TLS model",
                               tls_model_arg));
             sess.abort_if_errors();
+            sess.abort_if_lint_errors();
             bug!();
         }
     }

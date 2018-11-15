@@ -169,6 +169,7 @@ pub fn target_machine_factory(sess: &Session, find_features: bool)
                     sess.err(&format!("{:?} is not a valid code model",
                                       code_model_arg));
                     sess.abort_if_errors();
+                    sess.abort_if_lint_errors();
                     bug!();
                 }
             }
@@ -622,6 +623,7 @@ unsafe fn optimize(cgcx: &CodegenContext,
         }
 
         diag_handler.abort_if_errors();
+        diag_handler.abort_if_lint_errors();
 
         // Finally, run the actual optimization passes
         time_ext(config.time_passes,
@@ -2184,11 +2186,13 @@ pub fn run_assembler(cgcx: &CodegenContext, handler: &Handler, assembly: &Path, 
                        .note(str::from_utf8(&note[..]).unwrap())
                        .emit();
                 handler.abort_if_errors();
+                handler.abort_if_lint_errors();
             }
         },
         Err(e) => {
             handler.err(&format!("could not exec the linker `{}`: {}", pname.display(), e));
             handler.abort_if_errors();
+            handler.abort_if_lint_errors();
         }
     }
 }
@@ -2363,6 +2367,7 @@ impl SharedEmitterMain {
                 }
                 Ok(SharedEmitterMessage::AbortIfErrors) => {
                     sess.abort_if_errors();
+                    sess.abort_if_lint_errors();
                 }
                 Ok(SharedEmitterMessage::Fatal(msg)) => {
                     sess.fatal(&msg);
@@ -2401,6 +2406,7 @@ impl OngoingCodegen {
             Ok(Ok(compiled_modules)) => compiled_modules,
             Ok(Err(())) => {
                 sess.abort_if_errors();
+                sess.abort_if_lint_errors();
                 panic!("expected abort due to worker thread errors")
             },
             Err(_) => {
@@ -2411,6 +2417,7 @@ impl OngoingCodegen {
         sess.cgu_reuse_tracker.check_expected_reuse(sess);
 
         sess.abort_if_errors();
+        sess.abort_if_lint_errors();
 
         if let Some(time_graph) = self.time_graph {
             time_graph.dump(&format!("{}-timings", self.crate_name));

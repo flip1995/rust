@@ -722,6 +722,7 @@ fn link_natively(sess: &Session,
 
     // May have not found libraries in the right formats.
     sess.abort_if_errors();
+    sess.abort_if_lint_errors();
 
     // Invoke the system linker
     //
@@ -820,6 +821,7 @@ fn link_natively(sess: &Session,
                     .note(&escape_string(&output))
                     .emit();
                 sess.abort_if_errors();
+                sess.abort_if_lint_errors();
             }
             info!("linker stderr:\n{}", escape_string(&prog.stderr));
             info!("linker stdout:\n{}", escape_string(&prog.stdout));
@@ -850,6 +852,7 @@ fn link_natively(sess: &Session,
                     was installed with the Visual C++ option");
             }
             sess.abort_if_errors();
+            sess.abort_if_lint_errors();
         }
     }
 

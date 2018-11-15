@@ -177,6 +177,7 @@ impl CodegenBackend for MetadataOnlyCodegenBackend {
             }
         }
         tcx.sess.abort_if_errors();
+        tcx.sess.abort_if_lint_errors();
 
         let metadata = tcx.encode_metadata();
 
@@ -217,6 +218,7 @@ impl CodegenBackend for MetadataOnlyCodegenBackend {
         }
 
         sess.abort_if_errors();
+        sess.abort_if_lint_errors();
         if !sess.opts.crate_types.contains(&CrateType::Rlib)
             && !sess.opts.crate_types.contains(&CrateType::Dylib)
         {

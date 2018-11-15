@@ -429,9 +429,9 @@ impl Diagnostic {
         self.children.push(sub);
     }
 
-    pub(crate) fn is_lint(&self) -> {
+    pub(crate) fn is_lint(&self) -> bool {
         if let Some(DiagnosticId::Lint(_)) = self.code {
-            true
+            return true
         }
         false
     }

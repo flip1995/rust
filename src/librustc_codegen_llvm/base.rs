@@ -563,6 +563,7 @@ fn maybe_create_entry_wrapper(cx: &CodegenCx) {
                      .help("did you use #[no_mangle] on `fn main`? Use #[start] instead")
                      .emit();
             cx.sess().abort_if_errors();
+            cx.sess().abort_if_lint_errors();
             bug!();
         }
         let llfn = declare::declare_cfn(cx, "main", llfty);

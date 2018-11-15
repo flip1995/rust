@@ -172,6 +172,7 @@ pub fn abort_on_err<T>(result: Result<T, CompileIncomplete>, sess: &Session) -> 
     match result {
         Err(CompileIncomplete::Errored(ErrorReported)) => {
             sess.abort_if_errors();
+            sess.abort_if_lint_errors();
             panic!("error reported but abort_if_errors didn't abort???");
         }
         Err(CompileIncomplete::Stopped) => {
@@ -191,6 +192,7 @@ pub fn run<F>(run_compiler: F) -> isize
                 match session {
                     Some(sess) => {
                         sess.abort_if_errors();
+                        sess.abort_if_lint_errors(); // FIXME: maybe wrong
                         panic!("error reported but abort_if_errors didn't abort???");
                     }
                     None => {

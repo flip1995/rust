@@ -615,6 +615,7 @@ pub fn run_core(options: RustdocOptions) -> (clean::Crate, RenderInfo, RenderOpt
             }
 
             ctxt.sess().abort_if_errors();
+            ctxt.sess().abort_if_lint_errors();
 
             (krate, ctxt.renderinfo.into_inner(), render_options, passes)
         }), &sess)
