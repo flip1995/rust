@@ -969,6 +969,24 @@ impl<'a, 'gcx, 'tcx> Generics {
                .type_param(param, tcx)
         }
     }
+
+    /// Returns an iterator over `params` filtered by `kind = Type`.
+    pub fn types(&self) -> impl Iterator<Item = &GenericParamDef> + '_ {
+        self.params.iter().filter(|param| if let GenericParamDefKind::Type { .. } = param.kind {
+            true
+        } else {
+            false
+        })
+    }
+
+    /// Returns an iterator over `params` filtered by `kind = Lifetime`.
+    pub fn lifetimes(&self) -> impl Iterator<Item = &GenericParamDef> + '_ {
+        self.params.iter().filter(|param| if let GenericParamDefKind::Lifetime = param.kind {
+            true
+        } else {
+            false
+        })
+    }
 }
 
 /// Bounds on generics.
