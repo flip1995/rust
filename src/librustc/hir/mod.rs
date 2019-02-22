@@ -612,6 +612,33 @@ impl Generics {
         }
         None
     }
+
+    /// Returns an iterator over `params` filtered by `kind = Type`.
+    pub fn types(&self) -> impl Iterator<Item = &GenericParam> + '_ {
+        self.params.iter().filter(|param| if let GenericParamKind::Type { .. } = param.kind {
+            true
+        } else {
+            false
+        })
+    }
+
+    /// Returns an iterator over `params` filtered by `kind = Lifetime`.
+    pub fn lifetimes(&self) -> impl Iterator<Item = &GenericParam> + '_ {
+        self.params.iter().filter(|param| if let GenericParamKind::Lifetime { .. } = param.kind {
+            true
+        } else {
+            false
+        })
+    }
+
+    /// Returns an iterator over `params` filtered by `kind = Const`.
+    pub fn consts(&self) -> impl Iterator<Item = &GenericParam> + '_ {
+        self.params.iter().filter(|param| if let GenericParamKind::Const { .. } = param.kind {
+            true
+        } else {
+            false
+        })
+    }
 }
 
 /// Synthetic type parameters are converted to another form during lowering; this allows
