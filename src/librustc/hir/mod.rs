@@ -480,6 +480,33 @@ impl GenericArgs {
 
         own_counts
     }
+
+    /// Returns an iterator over the `hir::Ty` generic arguments.
+    pub fn types(&self) -> impl Iterator<Item = &Ty> + '_ {
+        self.args.iter().filter_map(|arg| if let GenericArg::Type(ty) = arg {
+            Some(ty)
+        } else {
+            None
+        })
+    }
+
+    /// Returns an iterator over the `hir::Lifetime` generic arguments.
+    pub fn lifetimes(&self) -> impl Iterator<Item = &Lifetime> + '_ {
+        self.args.iter().filter_map(|arg| if let GenericArg::Lifetime(lt) = arg {
+            Some(lt)
+        } else {
+            None
+        })
+    }
+
+    /// Returns an iterator over the `hir::ConstArg` generic arguments.
+    pub fn consts(&self) -> impl Iterator<Item = &ConstArg> + '_ {
+        self.args.iter().filter_map(|arg| if let GenericArg::Const(ca) = arg {
+            Some(ca)
+        } else {
+            None
+        })
+    }
 }
 
 /// A modifier on a bound, currently this is only used for `?Sized`, where the
