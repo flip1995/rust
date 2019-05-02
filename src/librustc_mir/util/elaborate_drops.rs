@@ -525,8 +525,8 @@ where
             )],
             terminator: Some(Terminator {
                 kind: TerminatorKind::Call {
-                    func: Operand::function_handle(tcx, drop_fn.def_id, substs,
-                                                   self.source_info.span),
+                    func: Operand::function_handle(tcx.at(self.source_info.span),
+                                                   drop_fn.def_id, substs),
                     args: vec![Operand::Move(Place::Base(PlaceBase::Local(ref_place)))],
                     destination: Some((unit_temp, succ)),
                     cleanup: unwind.into_option(),
@@ -899,7 +899,7 @@ where
         }).collect();
 
         let call = TerminatorKind::Call {
-            func: Operand::function_handle(tcx, free_func, substs, self.source_info.span),
+            func: Operand::function_handle(tcx.at(self.source_info.span), free_func, substs),
             args: args,
             destination: Some((unit_temp, target)),
             cleanup: None,

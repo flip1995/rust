@@ -2074,7 +2074,7 @@ where
 
             ty::Ref(_, ty, mt) if offset.bytes() == 0 => {
                 let tcx = cx.tcx();
-                let is_freeze = ty.is_freeze(tcx, cx.param_env(), DUMMY_SP);
+                let is_freeze = ty.is_freeze(tcx.at(DUMMY_SP), cx.param_env());
                 let kind = match mt {
                     hir::MutImmutable => if is_freeze {
                         PointerKind::Frozen

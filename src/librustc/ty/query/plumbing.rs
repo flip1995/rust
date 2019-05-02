@@ -5,7 +5,7 @@
 use crate::dep_graph::{DepNodeIndex, DepNode, DepKind, SerializedDepNodeIndex};
 use crate::ty::tls;
 use crate::ty::{self, TyCtxt};
-use crate::ty::query::Query;
+use crate::ty::query::{Query, TyCtxtAt};
 use crate::ty::query::config::{QueryConfig, QueryDescription};
 use crate::ty::query::job::{QueryJob, QueryResult, QueryInfo};
 
@@ -105,11 +105,10 @@ impl<'a, 'tcx, Q: QueryDescription<'tcx>> JobOwner<'a, 'tcx, Q> {
     /// for some compile-time benchmarks.
     #[inline(always)]
     pub(super) fn try_get(
-        tcx: TyCtxt<'a, 'tcx, '_>,
-        span: Span,
+        tcx: TyCtxtAt<'a, 'tcx, '_>,
         key: &Q::Key,
     ) -> TryGetJob<'a, 'tcx, Q> {
-        let cache = Q::query_cache(tcx);
+        let cache = Q::query_cache(*tcx);
         loop {
             let mut lock = cache.borrow_mut();
             if let Some(value) = lock.results.get(key) {
@@ -139,12 +138,12 @@ impl<'a, 'tcx, Q: QueryDescription<'tcx>> JobOwner<'a, 'tcx, Q> {
                 }
                 Entry::Vacant(entry) => {
                     // No job entry for this query. Return a new one to be started later.
-                    return tls::with_related_context(tcx, |icx| {
+                    return tls::with_related_context(*tcx, |icx| {
                         // Create the `parent` variable before `info`. This allows LLVM
                         // to elide the move of `info`
                         let parent = icx.query.clone();
                         let info = QueryInfo {
-                            span,
+                            span: tcx.span,
                             query: Q::query(key.clone()),
                         };
                         let job = Lrc::new(QueryJob::new(info, parent));
@@ -164,18 +163,18 @@ impl<'a, 'tcx, Q: QueryDescription<'tcx>> JobOwner<'a, 'tcx, Q> {
             // so we just return the error.
             #[cfg(not(parallel_compiler))]
             return TryGetJob::Cycle(cold_path(|| {
-                Q::handle_cycle_error(tcx, job.find_cycle_in_stack(tcx, span))
+                Q::handle_cycle_error(*tcx, job.find_cycle_in_stack(tcx))
             }));
 
             // With parallel queries we might just have to wait on some other
             // thread.
             #[cfg(parallel_compiler)]
             {
-                let result = job.r#await(tcx, span);
+                let result = job.r#await(tcx);
                 tcx.sess.profiler(|p| p.query_blocked_end(Q::NAME));
 
                 if let Err(cycle) = result {
-                    return TryGetJob::Cycle(Q::handle_cycle_error(tcx, cycle));
+                    return TryGetJob::Cycle(Q::handle_cycle_error(*tcx, cycle));
                 }
             }
         }
@@ -291,7 +290,9 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         assert!(!stack.is_empty());
 
         let fix_span = |span: Span, query: &Query<'gcx>| {
-            self.sess.source_map().def_span(query.default_span(self, span))
+            self.sess
+                .source_map()
+                .def_span(query.default_span(self.at(span)))
         };
 
         // Disable naming impls with types in this path, since that
@@ -369,7 +370,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
             )
         );
 
-        let job = match JobOwner::try_get(self, span, &key) {
+        let job = match JobOwner::try_get(self.at(span), &key) {
             TryGetJob::NotYetStarted(job) => job,
             TryGetJob::Cycle(result) => return result,
             TryGetJob::JobCompleted((v, index)) => {
@@ -638,7 +639,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
 
         // We may be concurrently trying both execute and force a query.
         // Ensure that only one of them runs the query.
-        let job = match JobOwner::try_get(self, span, &key) {
+        let job = match JobOwner::try_get(self.at(span), &key) {
             TryGetJob::NotYetStarted(job) => job,
             TryGetJob::Cycle(_) |
             TryGetJob::JobCompleted(_) => {
@@ -888,17 +889,17 @@ macro_rules! define_queries_inner {
             }
 
             // FIXME(eddyb) Get more valid Span's on queries.
-            pub fn default_span(&self, tcx: TyCtxt<'_, $tcx, '_>, span: Span) -> Span {
-                if !span.is_dummy() {
-                    return span;
+            pub fn default_span(&self, tcx: TyCtxtAt<'_, $tcx, '_>) -> Span {
+                if !tcx.span.is_dummy() {
+                    return tcx.span;
                 }
                 // The def_span query is used to calculate default_span,
                 // so exit to avoid infinite recursion
                 if let Query::def_span(..) = *self {
-                    return span
+                    return tcx.span
                 }
                 match *self {
-                    $(Query::$name(key) => key.default_span(tcx),)*
+                    $(Query::$name(key) => key.default_span(*tcx),)*
                 }
             }
 

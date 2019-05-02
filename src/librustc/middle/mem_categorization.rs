@@ -461,7 +461,7 @@ impl<'a, 'gcx, 'tcx> MemCategorizationContext<'a, 'gcx, 'tcx> {
         self.infcx.map(|infcx| infcx.type_is_copy_modulo_regions(param_env, ty, span))
             .or_else(|| {
                 self.tcx.lift_to_global(&(param_env, ty)).map(|(param_env, ty)| {
-                    ty.is_copy_modulo_regions(self.tcx.global_tcx(), param_env, span)
+                    ty.is_copy_modulo_regions(self.tcx.global_tcx().at(span), param_env)
                 })
             })
             .unwrap_or(true)

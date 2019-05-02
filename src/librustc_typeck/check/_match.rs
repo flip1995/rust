@@ -1068,12 +1068,12 @@ https://doc.rust-lang.org/reference/types.html#trait-objects");
                 return tcx.types.err;
             }
             Res::Def(DefKind::Method, _) => {
-                report_unexpected_variant_res(tcx, res, pat.span, qpath);
+                report_unexpected_variant_res(tcx.at(pat.span), res, qpath);
                 return tcx.types.err;
             }
             Res::Def(DefKind::Ctor(_, CtorKind::Fictive), _) |
             Res::Def(DefKind::Ctor(_, CtorKind::Fn), _) => {
-                report_unexpected_variant_res(tcx, res, pat.span, qpath);
+                report_unexpected_variant_res(tcx.at(pat.span), res, qpath);
                 return tcx.types.err;
             }
             Res::Def(DefKind::Ctor(_, CtorKind::Const), _) | Res::SelfCtor(..) |

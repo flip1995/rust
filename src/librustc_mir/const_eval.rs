@@ -19,7 +19,7 @@ use rustc::util::common::ErrorReported;
 use rustc_data_structures::fx::FxHashMap;
 
 use syntax::ast::Mutability;
-use syntax::source_map::{Span, DUMMY_SP};
+use syntax::source_map::DUMMY_SP;
 
 use crate::interpret::{self,
     PlaceTy, MPlaceTy, MemPlace, OpTy, ImmTy, Immediate, Scalar,
@@ -44,12 +44,11 @@ const DETECTOR_SNAPSHOT_PERIOD: isize = 256;
 /// of a function's generic parameter will require knowledge about the bounds on the generic
 /// parameter. These bounds are passed to `mk_eval_cx` via the `ParamEnv` argument.
 pub(crate) fn mk_eval_cx<'a, 'mir, 'tcx>(
-    tcx: TyCtxt<'a, 'tcx, 'tcx>,
-    span: Span,
+    tcx: TyCtxtAt<'a, 'tcx, 'tcx>,
     param_env: ty::ParamEnv<'tcx>,
 ) -> CompileTimeEvalContext<'a, 'mir, 'tcx> {
     debug!("mk_eval_cx: {:?}", param_env);
-    InterpretCx::new(tcx.at(span), param_env, CompileTimeInterpreter::new())
+    InterpretCx::new(tcx, param_env, CompileTimeInterpreter::new())
 }
 
 pub(crate) fn eval_promoted<'a, 'mir, 'tcx>(
@@ -59,7 +58,7 @@ pub(crate) fn eval_promoted<'a, 'mir, 'tcx>(
     param_env: ty::ParamEnv<'tcx>,
 ) -> InterpResult<'tcx, MPlaceTy<'tcx>> {
     let span = tcx.def_span(cid.instance.def_id());
-    let mut ecx = mk_eval_cx(tcx, span, param_env);
+    let mut ecx = mk_eval_cx(tcx.at(span), param_env);
     eval_body_using_ecx(&mut ecx, cid, body, param_env)
 }
 
@@ -165,7 +164,7 @@ fn eval_body_using_ecx<'mir, 'tcx>(
 
     // Intern the result
     let mutability = if tcx.is_mutable_static(cid.instance.def_id()) ||
-                     !layout.ty.is_freeze(tcx, param_env, body.span) {
+                     !layout.ty.is_freeze(tcx.at(body.span), param_env) {
         Mutability::Mutable
     } else {
         Mutability::Immutable
@@ -446,8 +445,7 @@ impl<'a, 'mir, 'tcx> interpret::Machine<'a, 'mir, 'tcx>
 
         let span = ecx.frame().span;
         ecx.machine.loop_detector.observe_and_analyze(
-            *ecx.tcx,
-            span,
+            ecx.tcx.at(span),
             &ecx.memory,
             &ecx.stack[..],
         )
@@ -481,7 +479,7 @@ pub fn const_field<'a, 'tcx>(
     value: &'tcx ty::Const<'tcx>,
 ) -> &'tcx ty::Const<'tcx> {
     trace!("const_field: {:?}, {:?}", field, value);
-    let ecx = mk_eval_cx(tcx, DUMMY_SP, param_env);
+    let ecx = mk_eval_cx(tcx.at(DUMMY_SP), param_env);
     // get the operand again
     let op = ecx.eval_const_to_op(value, None).unwrap();
     // downcast
@@ -504,7 +502,7 @@ pub fn const_variant_index<'a, 'tcx>(
     val: &'tcx ty::Const<'tcx>,
 ) -> VariantIdx {
     trace!("const_variant_index: {:?}", val);
-    let ecx = mk_eval_cx(tcx, DUMMY_SP, param_env);
+    let ecx = mk_eval_cx(tcx.at(DUMMY_SP), param_env);
     let op = ecx.eval_const_to_op(val, None).unwrap();
     ecx.read_discriminant(op).unwrap().1
 }
@@ -524,7 +522,7 @@ fn validate_and_turn_into_const<'a, 'tcx>(
     key: ty::ParamEnvAnd<'tcx, GlobalId<'tcx>>,
 ) -> ::rustc::mir::interpret::ConstEvalResult<'tcx> {
     let cid = key.value;
-    let ecx = mk_eval_cx(tcx, tcx.def_span(key.value.instance.def_id()), key.param_env);
+    let ecx = mk_eval_cx(tcx.at(tcx.def_span(key.value.instance.def_id())), key.param_env);
     let val = (|| {
         let mplace = ecx.raw_const_to_mplace(constant)?;
         let mut ref_tracking = RefTracking::new(mplace);

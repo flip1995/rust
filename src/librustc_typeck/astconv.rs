@@ -15,6 +15,7 @@ use rustc::lint::builtin::AMBIGUOUS_ASSOCIATED_ITEMS;
 use rustc::traits;
 use rustc::ty::{self, DefIdTree, Ty, TyCtxt, Const, ToPredicate, TypeFoldable};
 use rustc::ty::{GenericParamDef, GenericParamDefKind};
+use rustc::ty::query::TyCtxtAt;
 use rustc::ty::subst::{Kind, Subst, InternalSubsts, SubstsRef};
 use rustc::ty::wf::object_region_bounds;
 use rustc::mir::interpret::ConstValue;
@@ -201,15 +202,14 @@ impl<'o, 'gcx: 'tcx, 'tcx> dyn AstConv<'gcx, 'tcx> + 'o {
             )
         });
 
-        assoc_bindings.first().map(|b| Self::prohibit_assoc_ty_binding(self.tcx(), b.span));
+        assoc_bindings.first().map(|b| Self::prohibit_assoc_ty_binding(self.tcx().at(b.span)));
 
         substs
     }
 
     /// Report error if there is an explicit type parameter when using `impl Trait`.
     fn check_impl_trait(
-        tcx: TyCtxt<'_, '_, '_>,
-        span: Span,
+        tcx: TyCtxtAt<'_, '_, '_>,
         seg: &hir::PathSegment,
         generics: &ty::Generics,
     ) -> bool {
@@ -224,7 +224,7 @@ impl<'o, 'gcx: 'tcx, 'tcx> dyn AstConv<'gcx, 'tcx> + 'o {
         if explicit && impl_trait {
             let mut err = struct_span_err! {
                 tcx.sess,
-                span,
+                tcx.span,
                 E0632,
                 "cannot provide explicit type parameters when `impl Trait` is \
                  used in argument position."
@@ -239,8 +239,7 @@ impl<'o, 'gcx: 'tcx, 'tcx> dyn AstConv<'gcx, 'tcx> + 'o {
     /// Checks that the correct number of generic arguments have been provided.
     /// Used specifically for function calls.
     pub fn check_generic_arg_count_for_call(
-        tcx: TyCtxt<'_, '_, '_>,
-        span: Span,
+        tcx: TyCtxtAt<'_, '_, '_>,
         def: &ty::Generics,
         seg: &hir::PathSegment,
         is_method_call: bool,
@@ -248,10 +247,9 @@ impl<'o, 'gcx: 'tcx, 'tcx> dyn AstConv<'gcx, 'tcx> + 'o {
         let empty_args = P(hir::GenericArgs {
             args: HirVec::new(), bindings: HirVec::new(), parenthesized: false,
         });
-        let suppress_mismatch = Self::check_impl_trait(tcx, span, seg, &def);
+        let suppress_mismatch = Self::check_impl_trait(tcx, seg, &def);
         Self::check_generic_arg_count(
             tcx,
-            span,
             def,
             if let Some(ref args) = seg.args {
                 args
@@ -271,8 +269,7 @@ impl<'o, 'gcx: 'tcx, 'tcx> dyn AstConv<'gcx, 'tcx> + 'o {
     /// Checks that the correct number of generic arguments have been provided.
     /// This is used both for datatypes and function calls.
     fn check_generic_arg_count(
-        tcx: TyCtxt<'_, '_, '_>,
-        span: Span,
+        tcx: TyCtxtAt<'_, '_, '_>,
         def: &ty::Generics,
         args: &hir::GenericArgs,
         position: GenericArgPosition,
@@ -300,7 +297,7 @@ impl<'o, 'gcx: 'tcx, 'tcx> dyn AstConv<'gcx, 'tcx> + 'o {
         }
 
         if position != GenericArgPosition::Type && !args.bindings.is_empty() {
-            AstConv::prohibit_assoc_ty_binding(tcx, args.bindings[0].span);
+            AstConv::prohibit_assoc_ty_binding(tcx.at(args.bindings[0].span));
         }
 
         // Prohibit explicit lifetime arguments if late-bound lifetime parameters are present.
@@ -366,7 +363,7 @@ impl<'o, 'gcx: 'tcx, 'tcx> dyn AstConv<'gcx, 'tcx> + 'o {
                 potential_assoc_types = Some(spans.clone());
                 (spans, format!( "unexpected {} argument", kind))
             } else {
-                (vec![span], format!(
+                (vec![tcx.span], format!(
                     "expected {}{} {} argument{}",
                     quantifier,
                     bound,
@@ -615,8 +612,7 @@ impl<'o, 'gcx: 'tcx, 'tcx> dyn AstConv<'gcx, 'tcx> + 'o {
 
         let has_self = generic_params.has_self;
         let (_, potential_assoc_types) = Self::check_generic_arg_count(
-            tcx,
-            span,
+            tcx.at(span),
             &generic_params,
             &generic_args,
             GenericArgPosition::Type,
@@ -857,7 +853,7 @@ impl<'o, 'gcx: 'tcx, 'tcx> dyn AstConv<'gcx, 'tcx> + 'o {
                                                  trait_def_id,
                                                  self_ty,
                                                  trait_segment);
-        assoc_bindings.first().map(|b| AstConv::prohibit_assoc_ty_binding(self.tcx(), b.span));
+        assoc_bindings.first().map(|b| AstConv::prohibit_assoc_ty_binding(self.tcx().at(b.span)));
         ty::TraitRef::new(trait_def_id, substs)
     }
 
@@ -1599,7 +1595,7 @@ impl<'o, 'gcx: 'tcx, 'tcx> dyn AstConv<'gcx, 'tcx> + 'o {
                 });
                 if let Some(variant_def) = variant_def {
                     if permit_variants {
-                        check_type_alias_enum_variants_enabled(tcx, span);
+                        check_type_alias_enum_variants_enabled(tcx.at(span));
                         tcx.check_stability(variant_def.def_id, Some(hir_ref_id), span);
                         return Ok((qself_ty, DefKind::Variant, variant_def.def_id));
                     } else {
@@ -1802,7 +1798,7 @@ impl<'o, 'gcx: 'tcx, 'tcx> dyn AstConv<'gcx, 'tcx> + 'o {
                 }
                 for binding in &generic_args.bindings {
                     has_err = true;
-                    Self::prohibit_assoc_ty_binding(self.tcx(), binding.span);
+                    Self::prohibit_assoc_ty_binding(self.tcx().at(binding.span));
                     break;
                 }
             })
@@ -1810,10 +1806,10 @@ impl<'o, 'gcx: 'tcx, 'tcx> dyn AstConv<'gcx, 'tcx> + 'o {
         has_err
     }
 
-    pub fn prohibit_assoc_ty_binding(tcx: TyCtxt<'_, '_, '_>, span: Span) {
-        let mut err = struct_span_err!(tcx.sess, span, E0229,
+    pub fn prohibit_assoc_ty_binding(tcx: TyCtxtAt<'_, '_, '_>) {
+        let mut err = struct_span_err!(tcx.sess, tcx.span, E0229,
                                        "associated type bindings are not allowed here");
-        err.span_label(span, "associated type not allowed here").emit();
+        err.span_label(tcx.span, "associated type not allowed here").emit();
     }
 
     // FIXME(eddyb, varkor) handle type paths here too, not just value ones.
@@ -2086,7 +2082,7 @@ impl<'o, 'gcx: 'tcx, 'tcx> dyn AstConv<'gcx, 'tcx> + 'o {
                 tcx.mk_tup(fields.iter().map(|t| self.ast_ty_to_ty(&t)))
             }
             hir::TyKind::BareFn(ref bf) => {
-                require_c_abi_if_c_variadic(tcx, &bf.decl, bf.abi, ast_ty.span);
+                require_c_abi_if_c_variadic(tcx.at(ast_ty.span), &bf.decl, bf.abi);
                 tcx.mk_fn_ptr(self.ty_of_fn(bf.unsafety, bf.abi, &bf.decl))
             }
             hir::TyKind::TraitObject(ref bounds, ref lifetime) => {

@@ -322,7 +322,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                 }).self_ty;
                 let ty = self.probe_instantiate_query_response(span, &orig_values, ty)
                     .unwrap_or_else(|_| span_bug!(span, "instantiating {:?} failed?", ty));
-                autoderef::report_autoderef_recursion_limit_error(self.tcx, span,
+                autoderef::report_autoderef_recursion_limit_error(self.tcx.at(span),
                                                                   ty.value);
             });
         }

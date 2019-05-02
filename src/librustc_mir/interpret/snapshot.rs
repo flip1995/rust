@@ -15,8 +15,9 @@ use rustc::mir::interpret::{
     InterpResult, InterpError,
 };
 
-use rustc::ty::{self, TyCtxt};
+use rustc::ty;
 use rustc::ty::layout::Align;
+use rustc::ty::query::TyCtxtAt;
 use rustc_data_structures::fx::FxHashSet;
 use rustc_data_structures::indexed_vec::IndexVec;
 use rustc_data_structures::stable_hasher::{HashStable, StableHasher};
@@ -47,8 +48,7 @@ impl<'a, 'mir, 'tcx> InfiniteLoopDetector<'a, 'mir, 'tcx>
 {
     pub fn observe_and_analyze<'b>(
         &mut self,
-        tcx: TyCtxt<'b, 'tcx, 'tcx>,
-        span: Span,
+        tcx: TyCtxtAt<'b, 'tcx, 'tcx>,
         memory: &Memory<'a, 'mir, 'tcx, CompileTimeInterpreter<'a, 'mir, 'tcx>>,
         stack: &[Frame<'mir, 'tcx>],
     ) -> InterpResult<'tcx, ()> {
@@ -61,7 +61,7 @@ impl<'a, 'mir, 'tcx> InfiniteLoopDetector<'a, 'mir, 'tcx>
         // Check if we know that hash already
         if self.hashes.is_empty() {
             // FIXME(#49980): make this warning a lint
-            tcx.sess.span_warn(span,
+            tcx.sess.span_warn(tcx.span,
                 "Constant evaluating a complex constant, this might take some time");
         }
         if self.hashes.insert(hash) {

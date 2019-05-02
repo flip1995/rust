@@ -21,7 +21,7 @@ use crate::lint;
 use crate::middle::resolve_lifetime as rl;
 use crate::middle::weak_lang_items;
 use rustc::mir::mono::Linkage;
-use rustc::ty::query::Providers;
+use rustc::ty::query::{Providers, TyCtxtAt};
 use rustc::ty::subst::{Subst, InternalSubsts};
 use rustc::ty::util::Discr;
 use rustc::ty::util::IntTypeExt;
@@ -1135,10 +1135,10 @@ fn generics_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, def_id: DefId) -> &'tcx ty
     })
 }
 
-fn report_assoc_ty_on_inherent_impl<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, span: Span) {
+fn report_assoc_ty_on_inherent_impl<'a, 'tcx>(tcx: TyCtxtAt<'a, 'tcx, 'tcx>) {
     span_err!(
         tcx.sess,
-        span,
+        tcx.span,
         E0202,
         "associated types are not yet supported in inherent impls (see #8995)"
     );
@@ -1197,7 +1197,7 @@ pub fn checked_type_of<'a, 'tcx>(
                     .impl_trait_ref(tcx.hir().get_parent_did_by_hir_id(hir_id))
                     .is_none()
                 {
-                    report_assoc_ty_on_inherent_impl(tcx, item.span);
+                    report_assoc_ty_on_inherent_impl(tcx.at(item.span));
                 }
 
                 find_existential_constraints(tcx, def_id)
@@ -1207,7 +1207,7 @@ pub fn checked_type_of<'a, 'tcx>(
                     .impl_trait_ref(tcx.hir().get_parent_did_by_hir_id(hir_id))
                     .is_none()
                 {
-                    report_assoc_ty_on_inherent_impl(tcx, item.span);
+                    report_assoc_ty_on_inherent_impl(tcx.at(item.span));
                 }
 
                 icx.to_ty(ty)

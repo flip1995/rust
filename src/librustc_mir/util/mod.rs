@@ -1,6 +1,5 @@
 use core::unicode::property::Pattern_White_Space;
-use rustc::ty::TyCtxt;
-use syntax_pos::Span;
+use rustc::ty::query::TyCtxtAt;
 
 pub mod aggregate;
 pub mod borrowck_errors;
@@ -21,11 +20,8 @@ pub use self::graphviz::{graphviz_safe_def_name, write_mir_graphviz};
 pub use self::graphviz::write_node_label as write_graphviz_node_label;
 
 /// If possible, suggest replacing `ref` with `ref mut`.
-pub fn suggest_ref_mut<'cx, 'gcx, 'tcx>(
-    tcx: TyCtxt<'cx, 'gcx, 'tcx>,
-    binding_span: Span,
-) -> Option<(String)> {
-    let hi_src = tcx.sess.source_map().span_to_snippet(binding_span).unwrap();
+pub fn suggest_ref_mut<'cx, 'gcx, 'tcx>(tcx: TyCtxtAt<'cx, 'gcx, 'tcx>) -> Option<(String)> {
+    let hi_src = tcx.sess.source_map().span_to_snippet(tcx.span).unwrap();
     if hi_src.starts_with("ref")
         && hi_src["ref".len()..].starts_with(Pattern_White_Space)
     {

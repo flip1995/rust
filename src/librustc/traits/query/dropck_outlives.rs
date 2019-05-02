@@ -2,8 +2,8 @@ use crate::infer::at::At;
 use crate::infer::InferOk;
 use crate::infer::canonical::OriginalQueryValues;
 use std::iter::FromIterator;
-use syntax::source_map::Span;
 use crate::ty::subst::Kind;
+use crate::ty::query::TyCtxtAt;
 use crate::ty::{self, Ty, TyCtxt};
 
 impl<'cx, 'gcx, 'tcx> At<'cx, 'gcx, 'tcx> {
@@ -55,7 +55,7 @@ impl<'cx, 'gcx, 'tcx> At<'cx, 'gcx, 'tcx> {
                     result)
                 {
                     let ty = self.infcx.resolve_vars_if_possible(&ty);
-                    let kinds = value.into_kinds_reporting_overflows(tcx, span, ty);
+                    let kinds = value.into_kinds_reporting_overflows(tcx.at(span), ty);
                     return InferOk {
                         value: kinds,
                         obligations,
@@ -87,14 +87,13 @@ pub struct DropckOutlivesResult<'tcx> {
 impl<'tcx> DropckOutlivesResult<'tcx> {
     pub fn report_overflows(
         &self,
-        tcx: TyCtxt<'_, '_, 'tcx>,
-        span: Span,
+        tcx: TyCtxtAt<'_, '_, 'tcx>,
         ty: Ty<'tcx>,
     ) {
         if let Some(overflow_ty) = self.overflows.iter().next() {
             let mut err = struct_span_err!(
                 tcx.sess,
-                span,
+                tcx.span,
                 E0320,
                 "overflow while adding drop-check rules for {}",
                 ty,
@@ -106,11 +105,10 @@ impl<'tcx> DropckOutlivesResult<'tcx> {
 
     pub fn into_kinds_reporting_overflows(
         self,
-        tcx: TyCtxt<'_, '_, 'tcx>,
-        span: Span,
+        tcx: TyCtxtAt<'_, '_, 'tcx>,
         ty: Ty<'tcx>,
     ) -> Vec<Kind<'tcx>> {
-        self.report_overflows(tcx, span, ty);
+        self.report_overflows(tcx, ty);
         let DropckOutlivesResult { kinds, overflows: _ } = self;
         kinds
     }

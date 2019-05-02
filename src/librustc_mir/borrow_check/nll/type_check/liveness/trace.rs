@@ -484,8 +484,7 @@ impl LivenessContext<'_, '_, '_, '_, 'tcx> {
         }
 
         drop_data.dropck_result.report_overflows(
-            self.typeck.infcx.tcx,
-            self.body.source_info(*drop_locations.first().unwrap()).span,
+            self.typeck.infcx.tcx.at(self.body.source_info(*drop_locations.first().unwrap()).span),
             dropped_ty,
         );
 

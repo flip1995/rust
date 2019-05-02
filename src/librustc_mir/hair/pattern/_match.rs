@@ -176,7 +176,7 @@ use rustc::mir::interpret::{ConstValue, Scalar, truncate, AllocId, Pointer};
 use rustc::util::common::ErrorReported;
 
 use syntax::attr::{SignedInt, UnsignedInt};
-use syntax_pos::{Span, DUMMY_SP};
+use syntax_pos::DUMMY_SP;
 
 use arena::TypedArena;
 
@@ -1425,7 +1425,6 @@ fn constructor_sub_pattern_tys<'a, 'tcx: 'a>(cx: &MatchCheckCtxt<'a, 'tcx>,
 // second pattern to lint about unreachable match arms.
 fn slice_pat_covered_by_const<'tcx>(
     tcx: TyCtxt<'_, 'tcx, '_>,
-    _span: Span,
     const_val: &'tcx ty::Const<'tcx>,
     prefix: &[Pattern<'tcx>],
     slice: &Option<Pattern<'tcx>>,
@@ -1851,7 +1850,7 @@ fn specialize<'p, 'a: 'p, 'tcx: 'a>(
                     }
                 }
                 ConstantValue(cv) => {
-                    match slice_pat_covered_by_const(cx.tcx, pat.span, cv, prefix, slice, suffix) {
+                    match slice_pat_covered_by_const(cx.tcx, cv, prefix, slice, suffix) {
                         Ok(true) => Some(smallvec![]),
                         Ok(false) => None,
                         Err(ErrorReported) => None

@@ -306,8 +306,7 @@ impl<'a, 'gcx, 'tcx> ConfirmContext<'a, 'gcx, 'tcx> {
         // variables.
         let generics = self.tcx.generics_of(pick.item.def_id);
         AstConv::check_generic_arg_count_for_call(
-            self.tcx,
-            self.span,
+            self.tcx.at(self.span),
             &generics,
             &seg,
             true, // `is_method_call`
@@ -604,7 +603,7 @@ impl<'a, 'gcx, 'tcx> ConfirmContext<'a, 'gcx, 'tcx> {
         // Disallow calls to the method `drop` defined in the `Drop` trait.
         match pick.item.container {
             ty::TraitContainer(trait_def_id) => {
-                callee::check_legal_trait_for_method_call(self.tcx, self.span, trait_def_id)
+                callee::check_legal_trait_for_method_call(self.tcx.at(self.span), trait_def_id)
             }
             ty::ImplContainer(..) => {}
         }

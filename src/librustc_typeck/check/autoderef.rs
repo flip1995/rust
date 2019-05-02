@@ -5,9 +5,10 @@ use rustc::hir;
 use rustc::infer::{InferCtxt, InferOk};
 use rustc::session::DiagnosticMessageId;
 use rustc::traits::{self, TraitEngine};
-use rustc::ty::{self, Ty, TyCtxt, TraitRef};
+use rustc::ty::{self, Ty, TraitRef};
 use rustc::ty::{ToPredicate, TypeFoldable};
 use rustc::ty::adjustment::{Adjustment, Adjust, OverloadedDeref};
+use rustc::ty::query::TyCtxtAt;
 
 use syntax_pos::Span;
 use syntax::ast::Ident;
@@ -51,7 +52,7 @@ impl<'a, 'gcx, 'tcx> Iterator for Autoderef<'a, 'gcx, 'tcx> {
 
         if self.steps.len() >= *tcx.sess.recursion_limit.get() {
             if !self.silence_errors {
-                report_autoderef_recursion_limit_error(tcx, self.span, self.cur_ty);
+                report_autoderef_recursion_limit_error(tcx.at(self.span), self.cur_ty);
             }
             self.reached_recursion_limit = true;
             return None;
@@ -240,21 +241,21 @@ impl<'a, 'gcx, 'tcx> Autoderef<'a, 'gcx, 'tcx> {
 }
 
 pub fn report_autoderef_recursion_limit_error<'a, 'gcx, 'tcx>(
-    tcx: TyCtxt<'a, 'gcx, 'tcx>, span: Span, ty: Ty<'tcx>)
+    tcx: TyCtxtAt<'a, 'gcx, 'tcx>, ty: Ty<'tcx>)
 {
     // We've reached the recursion limit, error gracefully.
     let suggested_limit = *tcx.sess.recursion_limit.get() * 2;
     let msg = format!("reached the recursion limit while auto-dereferencing `{:?}`",
                       ty);
-    let error_id = (DiagnosticMessageId::ErrorId(55), Some(span), msg);
+    let error_id = (DiagnosticMessageId::ErrorId(55), Some(tcx.span), msg);
     let fresh = tcx.sess.one_time_diagnostics.borrow_mut().insert(error_id);
     if fresh {
         struct_span_err!(tcx.sess,
-                         span,
+                         tcx.span,
                          E0055,
                          "reached the recursion limit while auto-dereferencing `{:?}`",
                          ty)
-            .span_label(span, "deref recursion limit reached")
+            .span_label(tcx.span, "deref recursion limit reached")
             .help(&format!(
                 "consider adding a `#![recursion_limit=\"{}\"]` attribute to your crate",
                 suggested_limit))

@@ -696,11 +696,10 @@ impl<'a, 'tcx> ty::TyS<'tcx> {
     /// full requirements for the `Copy` trait (cc #29149) -- this
     /// winds up being reported as an error during NLL borrow check.
     pub fn is_copy_modulo_regions(&'tcx self,
-                                  tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                                  param_env: ty::ParamEnv<'tcx>,
-                                  span: Span)
+                                  tcx: TyCtxtAt<'a, 'tcx, 'tcx>,
+                                  param_env: ty::ParamEnv<'tcx>)
                                   -> bool {
-        tcx.at(span).is_copy_raw(param_env.and(self))
+        tcx.is_copy_raw(param_env.and(self))
     }
 
     /// Checks whether values of this type `T` have a size known at
@@ -724,11 +723,10 @@ impl<'a, 'tcx> ty::TyS<'tcx> {
     /// that the `Freeze` trait is not exposed to end users and is
     /// effectively an implementation detail.
     pub fn is_freeze(&'tcx self,
-                     tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                     param_env: ty::ParamEnv<'tcx>,
-                     span: Span)-> bool
+                     tcx: TyCtxtAt<'a, 'tcx, 'tcx>,
+                     param_env: ty::ParamEnv<'tcx>) -> bool
     {
-        tcx.at(span).is_freeze_raw(param_env.and(self))
+        tcx.is_freeze_raw(param_env.and(self))
     }
 
     /// If `ty.needs_drop(...)` returns `true`, then `ty` is definitely
@@ -760,11 +758,7 @@ impl<'a, 'tcx> ty::TyS<'tcx> {
 
     /// Check whether a type is representable. This means it cannot contain unboxed
     /// structural recursion. This check is needed for structs and enums.
-    pub fn is_representable(&'tcx self,
-                            tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                            sp: Span)
-                            -> Representability
-    {
+    pub fn is_representable(&'tcx self, tcx: TyCtxtAt<'a, 'tcx, 'tcx>) -> Representability {
         // Iterate until something non-representable is found
         fn fold_repr<It: Iterator<Item=Representability>>(iter: It) -> Representability {
             iter.fold(Representability::Representable, |r1, r2| {
@@ -779,7 +773,7 @@ impl<'a, 'tcx> ty::TyS<'tcx> {
         }
 
         fn are_inner_types_recursive<'a, 'tcx>(
-            tcx: TyCtxt<'a, 'tcx, 'tcx>, sp: Span,
+            tcx: TyCtxtAt<'a, 'tcx, 'tcx>,
             seen: &mut Vec<Ty<'tcx>>,
             representable_cache: &mut FxHashMap<Ty<'tcx>, Representability>,
             ty: Ty<'tcx>)
@@ -791,7 +785,6 @@ impl<'a, 'tcx> ty::TyS<'tcx> {
                     fold_repr(ts.iter().map(|ty| {
                         is_type_structurally_recursive(
                             tcx,
-                            sp,
                             seen,
                             representable_cache,
                             ty.expect_ty(),
@@ -801,14 +794,14 @@ impl<'a, 'tcx> ty::TyS<'tcx> {
                 // Fixed-length vectors.
                 // FIXME(#11924) Behavior undecided for zero-length vectors.
                 Array(ty, _) => {
-                    is_type_structurally_recursive(tcx, sp, seen, representable_cache, ty)
+                    is_type_structurally_recursive(tcx, seen, representable_cache, ty)
                 }
                 Adt(def, substs) => {
                     // Find non representable fields with their spans
                     fold_repr(def.all_fields().map(|field| {
-                        let ty = field.ty(tcx, substs);
-                        let span = tcx.hir().span_if_local(field.did).unwrap_or(sp);
-                        match is_type_structurally_recursive(tcx, span, seen,
+                        let ty = field.ty(*tcx, substs);
+                        let span = tcx.hir().span_if_local(field.did).unwrap_or(tcx.span);
+                        match is_type_structurally_recursive(tcx, seen,
                                                              representable_cache, ty)
                         {
                             Representability::SelfRecursive(_) => {
@@ -839,29 +832,27 @@ impl<'a, 'tcx> ty::TyS<'tcx> {
         // Does the type `ty` directly (without indirection through a pointer)
         // contain any types on stack `seen`?
         fn is_type_structurally_recursive<'a, 'tcx>(
-            tcx: TyCtxt<'a, 'tcx, 'tcx>,
-            sp: Span,
+            tcx: TyCtxtAt<'a, 'tcx, 'tcx>,
             seen: &mut Vec<Ty<'tcx>>,
             representable_cache: &mut FxHashMap<Ty<'tcx>, Representability>,
             ty: Ty<'tcx>) -> Representability
         {
-            debug!("is_type_structurally_recursive: {:?} {:?}", ty, sp);
+            debug!("is_type_structurally_recursive: {:?} {:?}", ty, tcx.span);
             if let Some(representability) = representable_cache.get(ty) {
                 debug!("is_type_structurally_recursive: {:?} {:?} - (cached) {:?}",
-                       ty, sp, representability);
+                       ty, tcx.span, representability);
                 return representability.clone();
             }
 
             let representability = is_type_structurally_recursive_inner(
-                tcx, sp, seen, representable_cache, ty);
+                tcx, seen, representable_cache, ty);
 
             representable_cache.insert(ty, representability.clone());
             representability
         }
 
         fn is_type_structurally_recursive_inner<'a, 'tcx>(
-            tcx: TyCtxt<'a, 'tcx, 'tcx>,
-            sp: Span,
+            tcx: TyCtxtAt<'a, 'tcx, 'tcx>,
             seen: &mut Vec<Ty<'tcx>>,
             representable_cache: &mut FxHashMap<Ty<'tcx>, Representability>,
             ty: Ty<'tcx>) -> Representability
@@ -885,7 +876,7 @@ impl<'a, 'tcx> ty::TyS<'tcx> {
                                 debug!("SelfRecursive: {:?} contains {:?}",
                                        seen_type,
                                        ty);
-                                return Representability::SelfRecursive(vec![sp]);
+                                return Representability::SelfRecursive(vec![tcx.span]);
                             }
                         }
 
@@ -912,13 +903,13 @@ impl<'a, 'tcx> ty::TyS<'tcx> {
                     // For structs and enums, track all previously seen types by pushing them
                     // onto the 'seen' stack.
                     seen.push(ty);
-                    let out = are_inner_types_recursive(tcx, sp, seen, representable_cache, ty);
+                    let out = are_inner_types_recursive(tcx, seen, representable_cache, ty);
                     seen.pop();
                     out
                 }
                 _ => {
                     // No need to push in other cases.
-                    are_inner_types_recursive(tcx, sp, seen, representable_cache, ty)
+                    are_inner_types_recursive(tcx, seen, representable_cache, ty)
                 }
             }
         }
@@ -931,7 +922,7 @@ impl<'a, 'tcx> ty::TyS<'tcx> {
         let mut seen: Vec<Ty<'_>> = Vec::new();
         let mut representable_cache = FxHashMap::default();
         let r = is_type_structurally_recursive(
-            tcx, sp, &mut seen, &mut representable_cache, self);
+            tcx, &mut seen, &mut representable_cache, self);
         debug!("is_type_representable: {:?} is {:?}", self, r);
         r
     }
@@ -1017,7 +1008,7 @@ fn needs_drop_raw<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         // normalized version of the type, and therefore will definitely
         // know whether the type implements Copy (and thus needs no
         // cleanup/drop/zeroing) ...
-        _ if ty.is_copy_modulo_regions(tcx, param_env, DUMMY_SP) => false,
+        _ if ty.is_copy_modulo_regions(tcx.at(DUMMY_SP), param_env) => false,
 
         // ... (issue #22536 continued) but as an optimization, still use
         // prior logic of asking for the structural "may drop".

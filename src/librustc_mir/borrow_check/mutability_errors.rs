@@ -391,7 +391,7 @@ impl<'a, 'gcx, 'tcx> MirBorrowckCtxt<'a, 'gcx, 'tcx> {
                         ..
                     })) => {
                         let pattern_span = local_decl.source_info.span;
-                        suggest_ref_mut(self.infcx.tcx, pattern_span)
+                        suggest_ref_mut(self.infcx.tcx.at(pattern_span))
                             .map(|replacement| (pattern_span, replacement))
                     }
 

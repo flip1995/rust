@@ -153,10 +153,9 @@ pub fn gather_assignment<'a, 'tcx>(bccx: &BorrowckCtxt<'a, 'tcx>,
                                    assignment_id: hir::ItemLocalId,
                                    assignment_span: Span,
                                    assignee_loan_path: Rc<LoanPath<'tcx>>) {
-    move_data.add_assignment(bccx.tcx,
+    move_data.add_assignment(bccx.tcx.at(assignment_span),
                              assignee_loan_path,
-                             assignment_id,
-                             assignment_span);
+                             assignment_id);
 }
 
 // (keep in sync with move_error::report_cannot_move_out_of )

@@ -8,7 +8,7 @@ use crate::hir::{self, Item, Generics, StructField, Variant, HirId};
 use crate::hir::def::{Res, DefKind};
 use crate::hir::def_id::{CrateNum, CRATE_DEF_INDEX, DefId, LOCAL_CRATE};
 use crate::hir::intravisit::{self, Visitor, NestedVisitorMap};
-use crate::ty::query::Providers;
+use crate::ty::query::{Providers, TyCtxtAt};
 use crate::middle::privacy::AccessLevels;
 use crate::session::{DiagnosticMessageId, Session};
 use syntax::symbol::{Symbol, sym};
@@ -855,7 +855,7 @@ pub fn check_unused_or_stable_features<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>) {
     for &(feature, span, since) in declared_lang_features {
         if let Some(since) = since {
             // Warn if the user has enabled an already-stable lang feature.
-            unnecessary_stable_feature_lint(tcx, span, feature, since);
+            unnecessary_stable_feature_lint(tcx.at(span), feature, since);
         }
         if lang_features.contains(&feature) {
             // Warn if the user enables a lang feature multiple times.
@@ -888,7 +888,7 @@ pub fn check_unused_or_stable_features<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>) {
                 if let Some(since) = since {
                     if let Some(span) = remaining_lib_features.get(&feature) {
                         // Warn if the user has enabled an already-stable lib feature.
-                        unnecessary_stable_feature_lint(tcx, *span, feature, since);
+                        unnecessary_stable_feature_lint(tcx.at(*span), feature, since);
                     }
                 }
                 remaining_lib_features.remove(&feature);
@@ -921,14 +921,13 @@ pub fn check_unused_or_stable_features<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>) {
 }
 
 fn unnecessary_stable_feature_lint<'a, 'tcx>(
-    tcx: TyCtxt<'a, 'tcx, 'tcx>,
-    span: Span,
+    tcx: TyCtxtAt<'a, 'tcx, 'tcx>,
     feature: Symbol,
     since: Symbol
 ) {
     tcx.lint_hir(lint::builtin::STABLE_FEATURES,
         hir::CRATE_HIR_ID,
-        span,
+        tcx.span,
         &format!("the feature `{}` has been stable since {} and no longer requires \
                   an attribute to enable", feature, since));
 }

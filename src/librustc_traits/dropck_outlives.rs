@@ -3,11 +3,11 @@ use rustc::infer::canonical::{Canonical, QueryResponse};
 use rustc::traits::query::dropck_outlives::{DropckOutlivesResult, DtorckConstraint};
 use rustc::traits::query::{CanonicalTyGoal, NoSolution};
 use rustc::traits::{TraitEngine, Normalized, ObligationCause, TraitEngineExt};
-use rustc::ty::query::Providers;
+use rustc::ty::query::{Providers, TyCtxtAt};
 use rustc::ty::subst::{Subst, InternalSubsts};
 use rustc::ty::{self, ParamEnvAnd, Ty, TyCtxt};
 use rustc::util::nodemap::FxHashSet;
-use syntax::source_map::{Span, DUMMY_SP};
+use syntax::source_map::{DUMMY_SP};
 
 crate fn provide(p: &mut Providers<'_>) {
     *p = Providers {
@@ -85,7 +85,7 @@ fn dropck_outlives<'tcx>(
                     dtorck_types,
                     outlives,
                     overflows,
-                } = dtorck_constraint_for_ty(tcx, DUMMY_SP, for_ty, depth, ty)?;
+                } = dtorck_constraint_for_ty(tcx.at(DUMMY_SP), for_ty, depth, ty)?;
 
                 // "outlives" represent types/regions that may be touched
                 // by a destructor.
@@ -147,15 +147,14 @@ fn dropck_outlives<'tcx>(
 /// Returns a set of constraints that needs to be satisfied in
 /// order for `ty` to be valid for destruction.
 fn dtorck_constraint_for_ty<'a, 'gcx, 'tcx>(
-    tcx: TyCtxt<'a, 'gcx, 'tcx>,
-    span: Span,
+    tcx: TyCtxtAt<'a, 'gcx, 'tcx>,
     for_ty: Ty<'tcx>,
     depth: usize,
     ty: Ty<'tcx>,
 ) -> Result<DtorckConstraint<'tcx>, NoSolution> {
     debug!(
         "dtorck_constraint_for_ty({:?}, {:?}, {:?}, {:?})",
-        span, for_ty, depth, ty
+        tcx.span, for_ty, depth, ty
     );
 
     if depth >= *tcx.sess.recursion_limit.get() {
@@ -186,16 +185,16 @@ fn dtorck_constraint_for_ty<'a, 'gcx, 'tcx>(
 
         ty::Array(ety, _) | ty::Slice(ety) => {
             // single-element containers, behave like their element
-            dtorck_constraint_for_ty(tcx, span, for_ty, depth + 1, ety)
+            dtorck_constraint_for_ty(tcx, for_ty, depth + 1, ety)
         }
 
         ty::Tuple(tys) => tys.iter()
-            .map(|ty| dtorck_constraint_for_ty(tcx, span, for_ty, depth + 1, ty.expect_ty()))
+            .map(|ty| dtorck_constraint_for_ty(tcx, for_ty, depth + 1, ty.expect_ty()))
             .collect(),
 
         ty::Closure(def_id, substs) => substs
-            .upvar_tys(def_id, tcx)
-            .map(|ty| dtorck_constraint_for_ty(tcx, span, for_ty, depth + 1, ty))
+            .upvar_tys(def_id, *tcx)
+            .map(|ty| dtorck_constraint_for_ty(tcx, for_ty, depth + 1, ty))
             .collect(),
 
         ty::Generator(def_id, substs, _movability) => {
@@ -223,7 +222,7 @@ fn dtorck_constraint_for_ty<'a, 'gcx, 'tcx>(
             // *do* incorporate the upvars here.
 
             let constraint = DtorckConstraint {
-                outlives: substs.upvar_tys(def_id, tcx).map(|t| t.into()).collect(),
+                outlives: substs.upvar_tys(def_id, *tcx).map(|t| t.into()).collect(),
                 dtorck_types: vec![],
                 overflows: vec![],
             };
@@ -240,13 +239,13 @@ fn dtorck_constraint_for_ty<'a, 'gcx, 'tcx>(
                 dtorck_types,
                 outlives,
                 overflows,
-            } = tcx.at(span).adt_dtorck_constraint(def.did)?;
+            } = tcx.adt_dtorck_constraint(def.did)?;
             Ok(DtorckConstraint {
                 // FIXME: we can try to recursively `dtorck_constraint_on_ty`
                 // there, but that needs some way to handle cycles.
-                dtorck_types: dtorck_types.subst(tcx, substs),
-                outlives: outlives.subst(tcx, substs),
-                overflows: overflows.subst(tcx, substs),
+                dtorck_types: dtorck_types.subst(*tcx, substs),
+                outlives: outlives.subst(*tcx, substs),
+                overflows: overflows.subst(*tcx, substs),
             })
         }
 
@@ -303,7 +302,7 @@ crate fn adt_dtorck_constraint<'a, 'tcx>(
 
     let mut result = def.all_fields()
         .map(|field| tcx.type_of(field.did))
-        .map(|fty| dtorck_constraint_for_ty(tcx, span, fty, 0, fty))
+        .map(|fty| dtorck_constraint_for_ty(tcx.at(span), fty, 0, fty))
         .collect::<Result<DtorckConstraint<'_>, NoSolution>>()?;
     result.outlives.extend(tcx.destructor_constraints(def));
     dedup_dtorck_constraint(&mut result);

@@ -30,6 +30,7 @@ use syntax::ast::Name;
 use syntax::symbol::{InternedString, Symbol};
 use syntax_pos::{Span, DUMMY_SP};
 use crate::ty::fold::{TypeFoldable, TypeFolder, TypeVisitor};
+use crate::ty::query::TyCtxtAt;
 use crate::ty::subst::{Subst, SubstsRef};
 use crate::ty::layout::VariantIdx;
 use crate::ty::{
@@ -2324,17 +2325,16 @@ impl<'tcx> Operand<'tcx> {
     /// with given `DefId` and substs. Since this is used to synthesize
     /// MIR, assumes `user_ty` is None.
     pub fn function_handle<'a>(
-        tcx: TyCtxt<'a, 'tcx, 'tcx>,
+        tcx: TyCtxtAt<'a, 'tcx, 'tcx>,
         def_id: DefId,
         substs: SubstsRef<'tcx>,
-        span: Span,
     ) -> Self {
-        let ty = tcx.type_of(def_id).subst(tcx, substs);
+        let ty = tcx.type_of(def_id).subst(*tcx, substs);
         Operand::Constant(box Constant {
-            span,
+            span: tcx.span,
             ty,
             user_ty: None,
-            literal: ty::Const::zero_sized(tcx, ty),
+            literal: ty::Const::zero_sized(*tcx, ty),
         })
     }
 

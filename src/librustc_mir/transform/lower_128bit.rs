@@ -105,8 +105,8 @@ impl Lower128Bit {
                     Some(Terminator {
                         source_info,
                         kind: TerminatorKind::Call {
-                            func: Operand::function_handle(tcx, call_did,
-                                List::empty(), source_info.span),
+                            func: Operand::function_handle(tcx.at(source_info.span),
+                                                           call_did, List::empty()),
                             args: vec![lhs, rhs],
                             destination: Some((place, bb)),
                             cleanup: None,

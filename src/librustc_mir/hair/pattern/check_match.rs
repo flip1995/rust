@@ -592,7 +592,7 @@ fn check_legality_of_move_bindings(
                     match bm {
                         ty::BindByValue(..) => {
                             let pat_ty = cx.tables.node_type(p.hir_id);
-                            if !pat_ty.is_copy_modulo_regions(cx.tcx, cx.param_env, pat.span) {
+                            if !pat_ty.is_copy_modulo_regions(cx.tcx.at(pat.span), cx.param_env) {
                                 check_move(p, sub.as_ref().map(|p| &**p), span_vec);
                             }
                         }

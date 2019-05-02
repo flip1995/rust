@@ -1228,7 +1228,7 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
                 match self.local_binding_mode(hir_id) {
                     ty::BindByReference(..) => {
                         let let_span = self.tcx.hir().span_by_hir_id(hir_id);
-                        let suggestion = suggest_ref_mut(self.tcx, let_span);
+                        let suggestion = suggest_ref_mut(self.tcx.at(let_span));
                         if let Some(replace_str) = suggestion {
                             db.span_suggestion(
                                 let_span,

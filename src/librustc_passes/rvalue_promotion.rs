@@ -131,7 +131,7 @@ impl<'a, 'gcx> CheckCrateVisitor<'a, 'gcx> {
     fn type_promotability(&mut self, ty: Ty<'gcx>) -> Promotability {
         debug!("type_promotability({})", ty);
 
-        if ty.is_freeze(self.tcx, self.param_env, DUMMY_SP) &&
+        if ty.is_freeze(self.tcx.at(DUMMY_SP), self.param_env) &&
             !ty.needs_drop(self.tcx, self.param_env) {
             Promotable
         } else {

@@ -37,6 +37,7 @@ use rustc::traits::query::{Fallible, NoSolution};
 use rustc::traits::{ObligationCause, PredicateObligations};
 use rustc::ty::adjustment::{PointerCast};
 use rustc::ty::fold::TypeFoldable;
+use rustc::ty::query::TyCtxtAt;
 use rustc::ty::subst::{Subst, SubstsRef, UnpackedKind, UserSubsts};
 use rustc::ty::{
     self, RegionVid, ToPolyTraitRef, Ty, TyCtxt, UserType,
@@ -53,8 +54,7 @@ use syntax_pos::{Span, DUMMY_SP};
 macro_rules! span_mirbug {
     ($context:expr, $elem:expr, $($message:tt)*) => ({
         $crate::borrow_check::nll::type_check::mirbug(
-            $context.tcx(),
-            $context.last_span,
+            $context.tcx().at($context.last_span),
             &format!(
                 "broken MIR in {:?} ({:?}): {}",
                 $context.mir_def_id,
@@ -235,11 +235,11 @@ fn translate_outlives_facts(cx: &mut BorrowCheckContext<'_, '_>) {
     }
 }
 
-fn mirbug(tcx: TyCtxt<'_, '_, '_>, span: Span, msg: &str) {
+fn mirbug(tcx: TyCtxtAt<'_, '_, '_>, msg: &str) {
     // We sometimes see MIR failures (notably predicate failures) due to
     // the fact that we check rvalue sized predicates here. So use `delay_span_bug`
     // to avoid reporting bugs in those cases.
-    tcx.sess.diagnostic().delay_span_bug(span, msg);
+    tcx.sess.diagnostic().delay_span_bug(tcx.span, msg);
 }
 
 enum FieldAccessError {

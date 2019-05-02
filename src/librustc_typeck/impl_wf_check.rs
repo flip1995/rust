@@ -13,11 +13,9 @@ use rustc::hir;
 use rustc::hir::itemlikevisit::ItemLikeVisitor;
 use rustc::hir::def_id::DefId;
 use rustc::ty::{self, TyCtxt};
-use rustc::ty::query::Providers;
+use rustc::ty::query::{Providers, TyCtxtAt};
 use rustc::util::nodemap::{FxHashMap, FxHashSet};
 use std::collections::hash_map::Entry::{Occupied, Vacant};
-
-use syntax_pos::Span;
 
 /// Checks that all the type/lifetime parameters on an impl also
 /// appear in the trait ref or self type (or are constrained by a
@@ -123,8 +121,7 @@ fn enforce_impl_params_are_constrained<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
             ty::GenericParamDefKind::Type { .. } => {
                 let param_ty = ty::ParamTy::for_def(param);
                 if !input_parameters.contains(&cgp::Parameter::from(param_ty)) {
-                    report_unused_parameter(tcx,
-                                            tcx.def_span(param.def_id),
+                    report_unused_parameter(tcx.at(tcx.def_span(param.def_id)),
                                             "type",
                                             &param_ty.to_string());
                 }
@@ -133,8 +130,7 @@ fn enforce_impl_params_are_constrained<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                 let param_lt = cgp::Parameter::from(param.to_early_bound_region_data());
                 if lifetimes_in_associated_types.contains(&param_lt) && // (*)
                     !input_parameters.contains(&param_lt) {
-                    report_unused_parameter(tcx,
-                                            tcx.def_span(param.def_id),
+                    report_unused_parameter(tcx.at(tcx.def_span(param.def_id)),
                                             "lifetime",
                                             &param.name.to_string());
                 }
@@ -142,10 +138,9 @@ fn enforce_impl_params_are_constrained<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
             ty::GenericParamDefKind::Const => {
                 let param_ct = ty::ParamConst::for_def(param);
                 if !input_parameters.contains(&cgp::Parameter::from(param_ct)) {
-                    report_unused_parameter(tcx,
-                                           tcx.def_span(param.def_id),
-                                           "const",
-                                           &param_ct.to_string());
+                    report_unused_parameter(tcx.at(tcx.def_span(param.def_id)),
+                                            "const",
+                                            &param_ct.to_string());
                 }
             }
         }
@@ -171,17 +166,16 @@ fn enforce_impl_params_are_constrained<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     // used elsewhere are not projected back out.
 }
 
-fn report_unused_parameter(tcx: TyCtxt<'_, '_, '_>,
-                           span: Span,
+fn report_unused_parameter(tcx: TyCtxtAt<'_, '_, '_>,
                            kind: &str,
                            name: &str)
 {
     struct_span_err!(
-        tcx.sess, span, E0207,
+        tcx.sess, tcx.span, E0207,
         "the {} parameter `{}` is not constrained by the \
         impl trait, self type, or predicates",
         kind, name)
-        .span_label(span, format!("unconstrained {} parameter", kind))
+        .span_label(tcx.span, format!("unconstrained {} parameter", kind))
         .emit();
 }
 

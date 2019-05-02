@@ -112,7 +112,7 @@ use rustc::ty::adjustment::{
     Adjust, Adjustment, AllowTwoPhase, AutoBorrow, AutoBorrowMutability, PointerCast
 };
 use rustc::ty::fold::TypeFoldable;
-use rustc::ty::query::Providers;
+use rustc::ty::query::{Providers, TyCtxtAt};
 use rustc::ty::subst::{UnpackedKind, Subst, InternalSubsts, SubstsRef, UserSelfTy, UserSubsts};
 use rustc::ty::util::{Representability, IntTypeExt, Discr};
 use rustc::ty::layout::VariantIdx;
@@ -841,7 +841,7 @@ fn typeck_tables_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         let fcx = if let Some(decl) = fn_decl {
             let fn_sig = tcx.fn_sig(def_id);
 
-            check_abi(tcx, span, fn_sig.abi());
+            check_abi(tcx.at(span), fn_sig.abi());
 
             // Compute the fty from point of view of inside the fn.
             let fn_sig =
@@ -919,9 +919,9 @@ fn typeck_tables_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     tables
 }
 
-fn check_abi<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, span: Span, abi: Abi) {
+fn check_abi<'a, 'tcx>(tcx: TyCtxtAt<'a, 'tcx, 'tcx>, abi: Abi) {
     if !tcx.sess.target.target.is_abi_supported(abi) {
-        struct_span_err!(tcx.sess, span, E0570,
+        struct_span_err!(tcx.sess, tcx.span, E0570,
             "The ABI `{}` is not supported for the current target", abi).emit()
     }
 }
@@ -1287,45 +1287,42 @@ fn check_fn<'a, 'gcx, 'tcx>(inherited: &'a Inherited<'a, 'gcx, 'tcx>,
     (fcx, gen_ty)
 }
 
-fn check_struct<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                          id: hir::HirId,
-                          span: Span) {
+fn check_struct<'a, 'tcx>(tcx: TyCtxtAt<'a, 'tcx, 'tcx>,
+                          id: hir::HirId) {
     let def_id = tcx.hir().local_def_id_from_hir_id(id);
     let def = tcx.adt_def(def_id);
-    def.destructor(tcx); // force the destructor to be evaluated
-    check_representable(tcx, span, def_id);
+    def.destructor(*tcx); // force the destructor to be evaluated
+    check_representable(tcx, def_id);
 
     if def.repr.simd() {
-        check_simd(tcx, span, def_id);
+        check_simd(tcx, def_id);
     }
 
-    check_transparent(tcx, span, def_id);
-    check_packed(tcx, span, def_id);
+    check_transparent(tcx, def_id);
+    check_packed(tcx, def_id);
 }
 
-fn check_union<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                         id: hir::HirId,
-                         span: Span) {
+fn check_union<'a, 'tcx>(tcx: TyCtxtAt<'a, 'tcx, 'tcx>,
+                         id: hir::HirId) {
     let def_id = tcx.hir().local_def_id_from_hir_id(id);
     let def = tcx.adt_def(def_id);
-    def.destructor(tcx); // force the destructor to be evaluated
-    check_representable(tcx, span, def_id);
+    def.destructor(*tcx); // force the destructor to be evaluated
+    check_representable(tcx, def_id);
     check_transparent(tcx, span, def_id);
-    check_packed(tcx, span, def_id);
+    check_packed(tcx, def_id);
 }
 
 fn check_opaque<'a, 'tcx>(
-    tcx: TyCtxt<'a, 'tcx, 'tcx>,
+    tcx: TyCtxtAt<'a, 'tcx, 'tcx>,
     def_id: DefId,
     substs: SubstsRef<'tcx>,
-    span: Span,
 ) {
     if let Err(partially_expanded_type) = tcx.try_expand_impl_trait_type(def_id, substs) {
         let mut err = struct_span_err!(
-            tcx.sess, span, E0720,
+            tcx.sess, tcx.span, E0720,
             "opaque type expands to a recursive type",
         );
-        err.span_label(span, "expands to self-referential type");
+        err.span_label(tcx.span, "expands to self-referential type");
         if let ty::Opaque(..) = partially_expanded_type.sty {
             err.note("type resolves to itself");
         } else {
@@ -1347,13 +1344,13 @@ pub fn check_item_type<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, it: &'tcx hir::Ite
         hir::ItemKind::Static(..) => {
             let def_id = tcx.hir().local_def_id_from_hir_id(it.hir_id);
             tcx.typeck_tables_of(def_id);
-            maybe_check_static_with_link_section(tcx, def_id, it.span);
+            maybe_check_static_with_link_section(tcx.at(it.span), def_id);
         }
         hir::ItemKind::Const(..) => {
             tcx.typeck_tables_of(tcx.hir().local_def_id_from_hir_id(it.hir_id));
         }
         hir::ItemKind::Enum(ref enum_definition, _) => {
-            check_enum(tcx, it.span, &enum_definition.variants, it.hir_id);
+            check_enum(tcx.at(it.span), &enum_definition.variants, it.hir_id);
         }
         hir::ItemKind::Fn(..) => {} // entirely within check_item_body
         hir::ItemKind::Impl(.., ref impl_item_refs) => {
@@ -1361,8 +1358,7 @@ pub fn check_item_type<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, it: &'tcx hir::Ite
             let impl_def_id = tcx.hir().local_def_id_from_hir_id(it.hir_id);
             if let Some(impl_trait_ref) = tcx.impl_trait_ref(impl_def_id) {
                 check_impl_items_against_trait(
-                    tcx,
-                    it.span,
+                    tcx.at(it.span),
                     impl_def_id,
                     impl_trait_ref,
                     impl_item_refs,
@@ -1376,16 +1372,16 @@ pub fn check_item_type<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, it: &'tcx hir::Ite
             check_on_unimplemented(tcx, def_id, it);
         }
         hir::ItemKind::Struct(..) => {
-            check_struct(tcx, it.hir_id, it.span);
+            check_struct(tcx.at(it.span), it.hir_id);
         }
         hir::ItemKind::Union(..) => {
-            check_union(tcx, it.hir_id, it.span);
+            check_union(tcx.at(it.span), it.hir_id);
         }
         hir::ItemKind::Existential(..) => {
             let def_id = tcx.hir().local_def_id_from_hir_id(it.hir_id);
 
             let substs = InternalSubsts::identity_for_item(tcx, def_id);
-            check_opaque(tcx, def_id, substs, it.span);
+            check_opaque(tcx.at(it.span), def_id, substs);
         }
         hir::ItemKind::Ty(..) => {
             let def_id = tcx.hir().local_def_id_from_hir_id(it.hir_id);
@@ -1394,7 +1390,7 @@ pub fn check_item_type<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, it: &'tcx hir::Ite
             check_bounds_are_used(tcx, &generics, pty_ty);
         }
         hir::ItemKind::ForeignMod(ref m) => {
-            check_abi(tcx, it.span, m.abi);
+            check_abi(tcx.at(it.span), m.abi);
 
             if m.abi == Abi::RustIntrinsic {
                 for item in &m.items {
@@ -1425,7 +1421,7 @@ pub fn check_item_type<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, it: &'tcx hir::Ite
                     }
 
                     if let hir::ForeignItemKind::Fn(ref fn_decl, _, _) = item.node {
-                        require_c_abi_if_c_variadic(tcx, fn_decl, m.abi, item.span);
+                        require_c_abi_if_c_variadic(tcx.at(item.span), fn_decl, m.abi);
                     }
                 }
             }
@@ -1434,7 +1430,7 @@ pub fn check_item_type<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, it: &'tcx hir::Ite
     }
 }
 
-fn maybe_check_static_with_link_section(tcx: TyCtxt<'_, '_, '_>, id: DefId, span: Span) {
+fn maybe_check_static_with_link_section(tcx: TyCtxtAt<'_, '_, '_>, id: DefId) {
     // Only restricted on wasm32 target for now
     if !tcx.sess.opts.target_triple.triple().starts_with("wasm32") {
         return
@@ -1451,7 +1447,7 @@ fn maybe_check_static_with_link_section(tcx: TyCtxt<'_, '_, '_>, id: DefId, span
     // other executable formats. Namely we can only embed a list of bytes,
     // nothing with pointers to anything else or relocations. If any relocation
     // show up, reject them here.
-    let instance = ty::Instance::mono(tcx, id);
+    let instance = ty::Instance::mono(*tcx, id);
     let cid = GlobalId {
         instance,
         promoted: None
@@ -1467,7 +1463,7 @@ fn maybe_check_static_with_link_section(tcx: TyCtxt<'_, '_, '_>, id: DefId, span
             let msg = "statics with a custom `#[link_section]` must be a \
                        simple list of bytes on the wasm target with no \
                        extra levels of indirection such as references";
-            tcx.sess.span_err(span, msg);
+            tcx.sess.span_err(tcx.span, msg);
         }
     }
 }
@@ -1532,12 +1528,11 @@ fn check_specialization_validity<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
 }
 
-fn check_impl_items_against_trait<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                                            impl_span: Span,
+fn check_impl_items_against_trait<'a, 'tcx>(tcx: TyCtxtAt<'a, 'tcx, 'tcx>,
                                             impl_id: DefId,
                                             impl_trait_ref: ty::TraitRef<'tcx>,
                                             impl_item_refs: &[hir::ImplItemRef]) {
-    let impl_span = tcx.sess.source_map().def_span(impl_span);
+    let impl_span = tcx.sess.source_map().def_span(tcx.span);
 
     // If the trait reference itself is erroneous (so the compilation is going
     // to fail), skip checking the items here -- the `impl_item` table in `tcx`
@@ -1570,7 +1565,7 @@ fn check_impl_items_against_trait<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                 hir::ImplItemKind::Const(..) => {
                     // Find associated const definition.
                     if ty_trait_item.kind == ty::AssocKind::Const {
-                        compare_const_impl(tcx,
+                        compare_const_impl(*tcx,
                                            &ty_impl_item,
                                            impl_item.span,
                                            &ty_trait_item,
@@ -1593,7 +1588,7 @@ fn check_impl_items_against_trait<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                 hir::ImplItemKind::Method(..) => {
                     let trait_span = tcx.hir().span_if_local(ty_trait_item.def_id);
                     if ty_trait_item.kind == ty::AssocKind::Method {
-                        compare_impl_method(tcx,
+                        compare_impl_method(*tcx,
                                             &ty_impl_item,
                                             impl_item.span,
                                             &ty_trait_item,
@@ -1633,7 +1628,7 @@ fn check_impl_items_against_trait<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                 }
             }
 
-            check_specialization_validity(tcx, trait_def, &ty_trait_item, impl_id, impl_item);
+            check_specialization_validity(*tcx, trait_def, &ty_trait_item, impl_id, impl_item);
         }
     }
 
@@ -1642,8 +1637,8 @@ fn check_impl_items_against_trait<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     let mut invalidated_items = Vec::new();
     let associated_type_overridden = overridden_associated_type.is_some();
     for trait_item in tcx.associated_items(impl_trait_ref.def_id) {
-        let is_implemented = trait_def.ancestors(tcx, impl_id)
-            .defs(tcx, trait_item.ident, trait_item.kind, impl_trait_ref.def_id)
+        let is_implemented = trait_def.ancestors(*tcx, impl_id)
+            .defs(*tcx, trait_item.ident, trait_item.kind, impl_trait_ref.def_id)
             .next()
             .map(|node_item| !node_item.node.is_from_trait())
             .unwrap_or(false);
@@ -1672,7 +1667,7 @@ fn check_impl_items_against_trait<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                 err.span_label(span, format!("`{}` from trait", trait_item.ident));
             } else {
                 err.note_trait_signature(trait_item.ident.to_string(),
-                                         trait_item.signature(tcx));
+                                         trait_item.signature(*tcx));
             }
         }
         err.emit();
@@ -1693,8 +1688,7 @@ fn check_impl_items_against_trait<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 /// Checks whether a type can be represented in memory. In particular, it
 /// identifies types that contain themselves without indirection through a
 /// pointer, which would mean their size is unbounded.
-fn check_representable<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                                 sp: Span,
+fn check_representable<'a, 'tcx>(tcx: TyCtxtAt<'a, 'tcx, 'tcx>,
                                  item_def_id: DefId)
                                  -> bool {
     let rty = tcx.type_of(item_def_id);
@@ -1704,7 +1698,7 @@ fn check_representable<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     // recursive type. It is only necessary to throw an error on those that
     // contain themselves. For case 2, there must be an inner type that will be
     // caught by case 1.
-    match rty.is_representable(tcx, sp) {
+    match rty.is_representable(tcx) {
         Representability::SelfRecursive(spans) => {
             let mut err = tcx.recursive_type_with_infinite_size_error(item_def_id);
             for span in spans {
@@ -1718,19 +1712,19 @@ fn check_representable<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     return true
 }
 
-pub fn check_simd<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, sp: Span, def_id: DefId) {
+pub fn check_simd<'a, 'tcx>(tcx: TyCtxtAt<'a, 'tcx, 'tcx>, def_id: DefId) {
     let t = tcx.type_of(def_id);
     if let ty::Adt(def, substs) = t.sty {
         if def.is_struct() {
             let fields = &def.non_enum_variant().fields;
             if fields.is_empty() {
-                span_err!(tcx.sess, sp, E0075, "SIMD vector cannot be empty");
+                span_err!(tcx.sess, tcx.span, E0075, "SIMD vector cannot be empty");
                 return;
             }
-            let e = fields[0].ty(tcx, substs);
-            if !fields.iter().all(|f| f.ty(tcx, substs) == e) {
-                struct_span_err!(tcx.sess, sp, E0076, "SIMD vector should be homogeneous")
-                                .span_label(sp, "SIMD elements must have the same type")
+            let e = fields[0].ty(*tcx, substs);
+            if !fields.iter().all(|f| f.ty(*tcx, substs) == e) {
+                struct_span_err!(tcx.sess, tcx.span, E0076, "SIMD vector should be homogeneous")
+                                .span_label(tcx.span, "SIMD elements must have the same type")
                                 .emit();
                 return;
             }
@@ -1738,7 +1732,7 @@ pub fn check_simd<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, sp: Span, def_id: DefId
                 ty::Param(_) => { /* struct<T>(T, T, T, T) is ok */ }
                 _ if e.is_machine() => { /* struct(u8, u8, u8, u8) is ok */ }
                 _ => {
-                    span_err!(tcx.sess, sp, E0077,
+                    span_err!(tcx.sess, tcx.span, E0077,
                               "SIMD vector element type should be machine type");
                     return;
                 }
@@ -1747,25 +1741,25 @@ pub fn check_simd<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, sp: Span, def_id: DefId
     }
 }
 
-fn check_packed<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, sp: Span, def_id: DefId) {
+fn check_packed<'a, 'tcx>(tcx: TyCtxtAt<'a, 'tcx, 'tcx>, def_id: DefId) {
     let repr = tcx.adt_def(def_id).repr;
     if repr.packed() {
         for attr in tcx.get_attrs(def_id).iter() {
             for r in attr::find_repr_attrs(&tcx.sess.parse_sess, attr) {
                 if let attr::ReprPacked(pack) = r {
                     if pack != repr.pack {
-                        struct_span_err!(tcx.sess, sp, E0634,
+                        struct_span_err!(tcx.sess, tcx.span, E0634,
                                          "type has conflicting packed representation hints").emit();
                     }
                 }
             }
         }
         if repr.align > 0 {
-            struct_span_err!(tcx.sess, sp, E0587,
+            struct_span_err!(tcx.sess, tcx.span, E0587,
                              "type has conflicting packed and align representation hints").emit();
         }
-        else if check_packed_inner(tcx, def_id, &mut Vec::new()) {
-            struct_span_err!(tcx.sess, sp, E0588,
+        else if check_packed_inner(*tcx, def_id, &mut Vec::new()) {
+            struct_span_err!(tcx.sess, tcx.span, E0588,
                 "packed type cannot transitively contain a `[repr(align)]` type").emit();
         }
     }
@@ -1801,7 +1795,7 @@ fn check_packed_inner<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     false
 }
 
-fn check_transparent<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, sp: Span, def_id: DefId) {
+fn check_transparent<'a, 'tcx>(tcx: TyCtxtAt<'a, 'tcx, 'tcx>, def_id: DefId) {
     let adt = tcx.adt_def(def_id);
     if !adt.repr.transparent() {
         return;
@@ -1811,7 +1805,7 @@ fn check_transparent<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, sp: Span, def_id: De
         if !tcx.features().transparent_enums {
             emit_feature_err(&tcx.sess.parse_sess,
                              sym::transparent_enums,
-                             sp,
+                             tcx.span,
                              GateIssue::Language,
                              "transparent enums are unstable");
         }
@@ -1819,7 +1813,7 @@ fn check_transparent<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, sp: Span, def_id: De
             let variant_spans: Vec<_> = adt.variants.iter().map(|variant| {
                 tcx.hir().span_if_local(variant.def_id).unwrap()
             }).collect();
-            let mut err = struct_span_err!(tcx.sess, sp, E0731,
+            let mut err = struct_span_err!(tcx.sess, tcx.span, E0731,
                             "transparent enum needs exactly one variant, but has {}",
                             adt.variants.len());
             if !variant_spans.is_empty() {
@@ -1837,14 +1831,14 @@ fn check_transparent<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, sp: Span, def_id: De
     if adt.is_union() && !tcx.features().transparent_unions {
         emit_feature_err(&tcx.sess.parse_sess,
                          sym::transparent_unions,
-                         sp,
+                         tcx.span,
                          GateIssue::Language,
                          "transparent unions are unstable");
     }
 
     // For each field, figure out if it's known to be a ZST and align(1)
     let field_infos = adt.all_fields().map(|field| {
-        let ty = field.ty(tcx, InternalSubsts::identity_for_item(tcx, field.did));
+        let ty = field.ty(*tcx, InternalSubsts::identity_for_item(*tcx, field.did));
         let param_env = tcx.param_env(field.did);
         let layout = tcx.layout_of(param_env.and(ty));
         // We are currently checking the type this field came from, so it must be local
@@ -1859,7 +1853,7 @@ fn check_transparent<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, sp: Span, def_id: De
     if non_zst_count != 1 {
         let field_spans: Vec<_> = non_zst_fields.map(|(span, _zst, _align1)| span).collect();
 
-        let mut err = struct_span_err!(tcx.sess, sp, E0690,
+        let mut err = struct_span_err!(tcx.sess, tcx.span, E0690,
                          "{}transparent {} needs exactly one non-zero-sized field, but has {}",
                          if adt.is_enum() { "the variant of a " } else { "" },
                          adt.descr(),
@@ -1881,13 +1875,12 @@ fn check_transparent<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, sp: Span, def_id: De
 }
 
 #[allow(trivial_numeric_casts)]
-pub fn check_enum<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                            sp: Span,
+pub fn check_enum<'a, 'tcx>(tcx: TyCtxtAt<'a, 'tcx, 'tcx>,
                             vs: &'tcx [hir::Variant],
                             id: hir::HirId) {
     let def_id = tcx.hir().local_def_id_from_hir_id(id);
     let def = tcx.adt_def(def_id);
-    def.destructor(tcx); // force the destructor to be evaluated
+    def.destructor(*tcx); // force the destructor to be evaluated
 
     if vs.is_empty() {
         let attributes = tcx.get_attrs(def_id);
@@ -1895,17 +1888,17 @@ pub fn check_enum<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
             struct_span_err!(
                 tcx.sess, attr.span, E0084,
                 "unsupported representation for zero-variant enum")
-                .span_label(sp, "zero-variant enum")
+                .span_label(tcx.span, "zero-variant enum")
                 .emit();
         }
     }
 
-    let repr_type_ty = def.repr.discr_type().to_ty(tcx);
+    let repr_type_ty = def.repr.discr_type().to_ty(*tcx);
     if repr_type_ty == tcx.types.i128 || repr_type_ty == tcx.types.u128 {
         if !tcx.features().repr128 {
             emit_feature_err(&tcx.sess.parse_sess,
                              sym::repr128,
-                             sp,
+                             tcx.span,
                              GateIssue::Language,
                              "repr with 128-bit type is unstable");
         }
@@ -1918,7 +1911,7 @@ pub fn check_enum<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     }
 
     let mut disr_vals: Vec<Discr<'tcx>> = Vec::with_capacity(vs.len());
-    for ((_, discr), v) in def.discriminants(tcx).zip(vs) {
+    for ((_, discr), v) in def.discriminants(*tcx).zip(vs) {
         // Check for duplicate discriminant values
         if let Some(i) = disr_vals.iter().position(|&x| x.val == discr.val) {
             let variant_did = def.variants[VariantIdx::new(i)].def_id;
@@ -1941,15 +1934,14 @@ pub fn check_enum<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         disr_vals.push(discr);
     }
 
-    check_representable(tcx, sp, def_id);
-    check_transparent(tcx, sp, def_id);
+    check_representable(tcx, def_id);
+    check_transparent(tcx, def_id);
 }
 
-fn report_unexpected_variant_res<'a, 'gcx, 'tcx>(tcx: TyCtxt<'a, 'gcx, 'tcx>,
+fn report_unexpected_variant_res<'a, 'gcx, 'tcx>(tcx: TyCtxtAt<'a, 'gcx, 'tcx>,
                                                  res: Res,
-                                                 span: Span,
                                                  qpath: &QPath) {
-    span_err!(tcx.sess, span, E0533,
+    span_err!(tcx.sess, tcx.span, E0533,
               "expected unit struct/variant or constant, found {} `{}`",
               res.descr(),
               hir::print::to_string(tcx.hir(), |s| s.print_qpath(qpath, false)));
@@ -4151,7 +4143,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                         tcx.types.err
                     }
                     Res::Def(DefKind::Ctor(_, CtorKind::Fictive), _) => {
-                        report_unexpected_variant_res(tcx, res, expr.span, qpath);
+                        report_unexpected_variant_res(tcx.at(expr.span), res, qpath);
                         tcx.types.err
                     }
                     _ => self.instantiate_value_path(segs, opt_ty, res, expr.span, id).0,
@@ -5392,7 +5384,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                 debug!("instantiate_value_path: def_id={:?} container={:?}", def_id, container);
                 match container {
                     ty::TraitContainer(trait_did) => {
-                        callee::check_legal_trait_for_method_call(tcx, span, trait_did)
+                        callee::check_legal_trait_for_method_call(tcx.at(span), trait_did)
                     }
                     ty::ImplContainer(impl_def_id) => {
                         if segments.len() == 1 {
@@ -5456,8 +5448,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
             // parameter's value explicitly, so we have to do some error-
             // checking here.
             let suppress_errors = AstConv::check_generic_arg_count_for_call(
-                tcx,
-                span,
+                tcx.at(span),
                 &generics,
                 &seg,
                 false, // `is_method_call`

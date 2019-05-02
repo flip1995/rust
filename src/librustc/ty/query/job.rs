@@ -11,7 +11,7 @@ use rustc_data_structures::jobserver;
 use syntax_pos::Span;
 
 use crate::ty::tls;
-use crate::ty::query::Query;
+use crate::ty::query::{Query, TyCtxtAt};
 use crate::ty::query::plumbing::CycleError;
 #[cfg(not(parallel_compiler))]
 use crate::ty::query::{
@@ -102,11 +102,10 @@ impl<'tcx> QueryJob<'tcx> {
     #[cfg(not(parallel_compiler))]
     pub(super) fn find_cycle_in_stack<'lcx>(
         &self,
-        tcx: TyCtxt<'_, 'tcx, 'lcx>,
-        span: Span,
+        tcx: TyCtxtAt<'_, 'tcx, 'lcx>,
     ) -> CycleError<'tcx> {
         // Get the current executing query (waiter) and find the waitee amongst its parents
-        let mut current_job = tls::with_related_context(tcx, |icx| icx.query.clone());
+        let mut current_job = tls::with_related_context(*tcx, |icx| icx.query.clone());
         let mut cycle = Vec::new();
 
         while let Some(job) = current_job {
@@ -119,7 +118,7 @@ impl<'tcx> QueryJob<'tcx> {
                 // The span entry we included was for the usage
                 // of the cycle itself, and not part of the cycle
                 // Replace it with the span which caused the cycle to form
-                cycle[0].span = span;
+                cycle[0].span = tcx.span;
                 // Find out why the cycle itself was used
                 let usage = job.parent.as_ref().map(|parent| {
                     (job.info.span, parent.info.query.clone())

@@ -251,7 +251,7 @@ impl<'a, 'tcx> Visitor<'tcx> for UnsafetyChecker<'a, 'tcx> {
                 let is_borrow_of_interior_mut = context.is_borrow() && !proj.base
                     .ty(self.body, self.tcx)
                     .ty
-                    .is_freeze(self.tcx, self.param_env, self.source_info.span);
+                    .is_freeze(self.tcx.at(self.source_info.span), self.param_env);
                 // prevent
                 // * `&mut x.field`
                 // * `x.field = y;`
@@ -296,9 +296,8 @@ impl<'a, 'tcx> Visitor<'tcx> for UnsafetyChecker<'a, 'tcx> {
                                         place)
                                 };
                                 if !elem_ty.is_copy_modulo_regions(
-                                    self.tcx,
+                                    self.tcx.at(self.source_info.span),
                                     self.param_env,
-                                    self.source_info.span,
                                 ) {
                                     self.require_unsafe(
                                         "assignment to non-`Copy` union field",

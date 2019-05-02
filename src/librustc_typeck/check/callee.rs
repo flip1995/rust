@@ -6,7 +6,8 @@ use errors::{Applicability, DiagnosticBuilder};
 use hir::def::Res;
 use hir::def_id::{DefId, LOCAL_CRATE};
 use rustc::ty::adjustment::{Adjust, Adjustment, AllowTwoPhase, AutoBorrow, AutoBorrowMutability};
-use rustc::ty::{self, Ty, TyCtxt, TypeFoldable};
+use rustc::ty::query::TyCtxtAt;
+use rustc::ty::{self, Ty, TypeFoldable};
 use rustc::{infer, traits};
 use rustc::infer::type_variable::{TypeVariableOrigin, TypeVariableOriginKind};
 use rustc_target::spec::abi;
@@ -18,10 +19,10 @@ use rustc::hir;
 /// Checks that it is legal to call methods of the trait corresponding
 /// to `trait_id` (this only cares about the trait, not the specific
 /// method that is called).
-pub fn check_legal_trait_for_method_call(tcx: TyCtxt<'_, '_, '_>, span: Span, trait_id: DefId) {
+pub fn check_legal_trait_for_method_call(tcx: TyCtxtAt<'_, '_, '_>, trait_id: DefId) {
     if tcx.lang_items().drop_trait() == Some(trait_id) {
-        struct_span_err!(tcx.sess, span, E0040, "explicit use of destructor method")
-            .span_label(span, "explicit destructor calls not allowed")
+        struct_span_err!(tcx.sess, tcx.span, E0040, "explicit use of destructor method")
+            .span_label(tcx.span, "explicit destructor calls not allowed")
             .emit();
     }
 }

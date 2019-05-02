@@ -2,7 +2,7 @@ use std::cell::Cell;
 use std::fmt::Write;
 use std::mem;
 
-use syntax::source_map::{self, Span, DUMMY_SP};
+use syntax::source_map::{self, Span};
 use rustc::hir::def_id::DefId;
 use rustc::hir::def::DefKind;
 use rustc::mir;
@@ -296,7 +296,7 @@ impl<'a, 'mir, 'tcx: 'mir, M: Machine<'a, 'mir, 'tcx>> InterpretCx<'a, 'mir, 'tc
     }
 
     pub fn type_is_freeze(&self, ty: Ty<'tcx>) -> bool {
-        ty.is_freeze(*self.tcx, self.param_env, DUMMY_SP)
+        ty.is_freeze(self.tcx, self.param_env)
     }
 
     pub fn load_mir(

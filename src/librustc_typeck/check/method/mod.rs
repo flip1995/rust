@@ -415,7 +415,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                     tcx.hygienic_eq(method_name, vd.ident, adt_def.did)
                 });
                 if let Some(variant_def) = variant_def {
-                    check_type_alias_enum_variants_enabled(tcx, span);
+                    check_type_alias_enum_variants_enabled(tcx.at(span));
 
                     // Braced variants generate unusable names in value namespace (reserved for
                     // possible future use), so variants resolved as associated items may refer to

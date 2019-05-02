@@ -108,7 +108,7 @@ use rustc::session::config::{EntryFnType, nightly_options};
 use rustc::traits::{ObligationCause, ObligationCauseCode, TraitEngine, TraitEngineExt};
 use rustc::ty::subst::SubstsRef;
 use rustc::ty::{self, Ty, TyCtxt};
-use rustc::ty::query::Providers;
+use rustc::ty::query::{Providers, TyCtxtAt};
 use rustc::util;
 use syntax_pos::Span;
 use util::common::time;
@@ -123,11 +123,10 @@ pub struct TypeAndSubsts<'tcx> {
     ty: Ty<'tcx>,
 }
 
-fn check_type_alias_enum_variants_enabled<'a, 'gcx, 'tcx>(tcx: TyCtxt<'a, 'gcx, 'tcx>,
-                                                          span: Span) {
+fn check_type_alias_enum_variants_enabled<'a, 'gcx, 'tcx>(tcx: TyCtxtAt<'a, 'gcx, 'tcx>) {
     if !tcx.features().type_alias_enum_variants {
         let mut err = tcx.sess.struct_span_err(
-            span,
+            tcx.span,
             "enum variants on type aliases are experimental"
         );
         if nightly_options::is_nightly_build() {
@@ -139,14 +138,13 @@ fn check_type_alias_enum_variants_enabled<'a, 'gcx, 'tcx>(tcx: TyCtxt<'a, 'gcx, 
     }
 }
 
-fn require_c_abi_if_c_variadic(tcx: TyCtxt<'_, '_, '_>,
+fn require_c_abi_if_c_variadic(tcx: TyCtxtAt<'_, '_, '_>,
                                decl: &hir::FnDecl,
-                               abi: Abi,
-                               span: Span) {
+                               abi: Abi) {
     if decl.c_variadic && !(abi == Abi::C || abi == Abi::Cdecl) {
-        let mut err = struct_span_err!(tcx.sess, span, E0045,
+        let mut err = struct_span_err!(tcx.sess, tcx.span, E0045,
             "C-variadic function must have C or cdecl calling convention");
-        err.span_label(span, "C-variadics require C or cdecl calling convention").emit();
+        err.span_label(tcx.span, "C-variadics require C or cdecl calling convention").emit();
     }
 }
 

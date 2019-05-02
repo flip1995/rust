@@ -125,7 +125,7 @@ impl<'a, 'mir, 'tcx> ConstPropagator<'a, 'mir, 'tcx> {
         source: MirSource<'tcx>,
     ) -> ConstPropagator<'a, 'mir, 'tcx> {
         let param_env = tcx.param_env(source.def_id());
-        let ecx = mk_eval_cx(tcx, tcx.def_span(source.def_id()), param_env);
+        let ecx = mk_eval_cx(tcx.at(tcx.def_span(source.def_id())), param_env);
         let can_const_prop = CanConstProp::check(body);
         let source_scope_local_data = std::mem::replace(
             &mut body.source_scope_local_data,

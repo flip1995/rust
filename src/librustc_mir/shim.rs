@@ -314,7 +314,7 @@ fn build_clone_shim<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     debug!("build_clone_shim(def_id={:?})", def_id);
 
     let mut builder = CloneShimBuilder::new(tcx, def_id, self_ty);
-    let is_copy = self_ty.is_copy_modulo_regions(tcx, tcx.param_env(def_id), builder.span);
+    let is_copy = self_ty.is_copy_modulo_regions(tcx.at(builder.span), tcx.param_env(def_id));
 
     let dest = Place::RETURN_PLACE;
     let src = Place::Base(PlaceBase::Local(Local::new(1+0))).deref();

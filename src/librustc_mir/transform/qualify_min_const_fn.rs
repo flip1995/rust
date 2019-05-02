@@ -2,6 +2,7 @@ use rustc::hir::def_id::DefId;
 use rustc::hir;
 use rustc::mir::*;
 use rustc::ty::{self, Predicate, Ty, TyCtxt, adjustment::{PointerCast}};
+use rustc::ty::query::TyCtxtAt;
 use rustc_target::spec::abi;
 use std::borrow::Cow;
 use syntax_pos::Span;
@@ -60,13 +61,12 @@ pub fn is_min_const_fn(
     }
 
     for local in &body.local_decls {
-        check_ty(tcx, local.ty, local.source_info.span, def_id)?;
+        check_ty(tcx.at(local.source_info.span), local.ty, def_id)?;
     }
     // impl trait is gone in MIR, so check the return type manually
     check_ty(
-        tcx,
+        tcx.at(body.local_decls.iter().next().unwrap().source_info.span),
         tcx.fn_sig(def_id).output().skip_binder(),
-        body.local_decls.iter().next().unwrap().source_info.span,
         def_id,
     )?;
 
@@ -80,21 +80,20 @@ pub fn is_min_const_fn(
 }
 
 fn check_ty(
-    tcx: TyCtxt<'a, 'tcx, 'tcx>,
+    tcx: TyCtxtAt<'a, 'tcx, 'tcx>,
     ty: Ty<'tcx>,
-    span: Span,
     fn_def_id: DefId,
 ) -> McfResult {
     for ty in ty.walk() {
         match ty.sty {
             ty::Ref(_, _, hir::Mutability::MutMutable) => return Err((
-                span,
+                tcx.span,
                 "mutable references in const fn are unstable".into(),
             )),
-            ty::Opaque(..) => return Err((span, "`impl Trait` in const fn is unstable".into())),
+            ty::Opaque(..) => return Err((tcx.span, "`impl Trait` in const fn is unstable".into())),
             ty::FnPtr(..) => {
                 if !tcx.const_fn_is_allowed_fn_ptr(fn_def_id) {
-                    return Err((span, "function pointers in const fn are unstable".into()))
+                    return Err((tcx.span, "function pointers in const fn are unstable".into()))
                 }
             }
             ty::Dynamic(preds, _) => {
@@ -103,7 +102,7 @@ fn check_ty(
                         | ty::ExistentialPredicate::AutoTrait(_)
                         | ty::ExistentialPredicate::Projection(_) => {
                             return Err((
-                                span,
+                                tcx.span,
                                 "trait bounds other than `Sized` \
                                  on const fn parameters are unstable"
                                     .into(),
@@ -112,7 +111,7 @@ fn check_ty(
                         ty::ExistentialPredicate::Trait(trait_ref) => {
                             if Some(trait_ref.def_id) != tcx.lang_items().sized_trait() {
                                 return Err((
-                                    span,
+                                    tcx.span,
                                     "trait bounds other than `Sized` \
                                      on const fn parameters are unstable"
                                         .into(),
@@ -129,79 +128,78 @@ fn check_ty(
 }
 
 fn check_rvalue(
-    tcx: TyCtxt<'a, 'tcx, 'tcx>,
+    tcx: TyCtxtAt<'a, 'tcx, 'tcx>,
     body: &'a Body<'tcx>,
     rvalue: &Rvalue<'tcx>,
-    span: Span,
 ) -> McfResult {
     match rvalue {
         Rvalue::Repeat(operand, _) | Rvalue::Use(operand) => {
-            check_operand(operand, span)
+            check_operand(operand, tcx.span)
         }
         Rvalue::Len(place) | Rvalue::Discriminant(place) | Rvalue::Ref(_, _, place) => {
-            check_place(place, span)
+            check_place(place, tcx.span)
         }
         Rvalue::Cast(CastKind::Misc, operand, cast_ty) => {
             use rustc::ty::cast::CastTy;
-            let cast_in = CastTy::from_ty(operand.ty(body, tcx)).expect("bad input type for cast");
+            let cast_in = CastTy::from_ty(operand.ty(body, *tcx)).expect("bad input type for cast");
             let cast_out = CastTy::from_ty(cast_ty).expect("bad output type for cast");
             match (cast_in, cast_out) {
                 (CastTy::Ptr(_), CastTy::Int(_)) | (CastTy::FnPtr, CastTy::Int(_)) => Err((
-                    span,
+                    tcx.span,
                     "casting pointers to ints is unstable in const fn".into(),
                 )),
                 (CastTy::RPtr(_), CastTy::Float) => bug!(),
                 (CastTy::RPtr(_), CastTy::Int(_)) => bug!(),
                 (CastTy::Ptr(_), CastTy::RPtr(_)) => bug!(),
-                _ => check_operand(operand, span),
+                _ => check_operand(operand, tcx.span),
             }
         }
         Rvalue::Cast(CastKind::Pointer(PointerCast::MutToConstPointer), operand, _) => {
-            check_operand(operand, span)
+            check_operand(operand, tcx.span)
         }
         Rvalue::Cast(CastKind::Pointer(PointerCast::UnsafeFnPointer), _, _) |
         Rvalue::Cast(CastKind::Pointer(PointerCast::ClosureFnPointer(_)), _, _) |
         Rvalue::Cast(CastKind::Pointer(PointerCast::ReifyFnPointer), _, _) => Err((
-            span,
+            tcx.span,
             "function pointer casts are not allowed in const fn".into(),
         )),
         Rvalue::Cast(CastKind::Pointer(PointerCast::Unsize), _, _) => Err((
-            span,
+            tcx.span,
             "unsizing casts are not allowed in const fn".into(),
         )),
         // binops are fine on integers
         Rvalue::BinaryOp(_, lhs, rhs) | Rvalue::CheckedBinaryOp(_, lhs, rhs) => {
-            check_operand(lhs, span)?;
-            check_operand(rhs, span)?;
-            let ty = lhs.ty(body, tcx);
+            check_operand(lhs, tcx.span)?;
+            check_operand(rhs, tcx.span)?;
+            let ty = lhs.ty(body, *tcx);
             if ty.is_integral() || ty.is_bool() || ty.is_char() {
                 Ok(())
             } else {
                 Err((
-                    span,
+                    tcx.span,
                     "only int, `bool` and `char` operations are stable in const fn".into(),
                 ))
             }
         }
         Rvalue::NullaryOp(NullOp::SizeOf, _) => Ok(()),
         Rvalue::NullaryOp(NullOp::Box, _) => Err((
-            span,
+            tcx.span,
             "heap allocations are not allowed in const fn".into(),
         )),
         Rvalue::UnaryOp(_, operand) => {
-            let ty = operand.ty(body, tcx);
+            let ty = operand.ty(body, *tcx);
             if ty.is_integral() || ty.is_bool() {
-                check_operand(operand, span)
+                check_operand(operand, tcx.span)
             } else {
                 Err((
-                    span,
+                    tcx.span,
                     "only int and `bool` operations are stable in const fn".into(),
                 ))
             }
         }
         Rvalue::Aggregate(_, operands) => {
             for operand in operands {
-                check_operand(operand, span)?;
+                check_operand(operand, tcx.span)?;
             }
             Ok(())
         }
@@ -217,7 +215,7 @@ fn check_statement(
     match &statement.kind {
         StatementKind::Assign(place, rval) => {
             check_place(place, span)?;
-            check_rvalue(tcx, body, rval, span)
+            check_rvalue(tcx.at(span), body, rval)
         }
 
         StatementKind::FakeRead(_, place) => check_place(place, span),

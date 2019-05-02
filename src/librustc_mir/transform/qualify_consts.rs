@@ -316,7 +316,7 @@ impl Qualif for HasMutInterior {
     const IDX: usize = 0;
 
     fn in_any_value_of_ty(cx: &ConstCx<'_, 'tcx>, ty: Ty<'tcx>) -> Option<bool> {
-        Some(!ty.is_freeze(cx.tcx, cx.param_env, DUMMY_SP))
+        Some(!ty.is_freeze(cx.tcx.at(DUMMY_SP), cx.param_env))
     }
 
     fn in_rvalue(cx: &ConstCx<'_, 'tcx>, rvalue: &Rvalue<'tcx>) -> bool {

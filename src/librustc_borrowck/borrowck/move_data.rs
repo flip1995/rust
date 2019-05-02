@@ -8,6 +8,7 @@ use crate::dataflow::{DataFlowContext, BitwiseOperator, DataFlowOperator, KillFr
 use crate::borrowck::*;
 use rustc::cfg;
 use rustc::ty::{self, TyCtxt};
+use rustc::ty::query::TyCtxtAt;
 use rustc::util::nodemap::FxHashMap;
 
 use std::cell::RefCell;
@@ -365,10 +366,9 @@ impl<'a, 'tcx> MoveData<'tcx> {
 
     /// Adds a new record for an assignment to `lp` that occurs at location `id` with the given
     /// `span`.
-    pub fn add_assignment(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>,
+    pub fn add_assignment(&self, tcx: TyCtxtAt<'a, 'tcx, 'tcx>,
                           lp: Rc<LoanPath<'tcx>>,
-                          assign_id: hir::ItemLocalId,
-                          span: Span) {
+                          assign_id: hir::ItemLocalId) {
         // Assigning to one union field automatically assigns to all its fields.
         if let LpExtend(ref base_lp, mutbl, LpInterior(opt_variant_id, interior)) = lp.kind {
             if let ty::Adt(adt_def, _) = base_lp.ty.sty {
@@ -384,29 +384,27 @@ impl<'a, 'tcx> MoveData<'tcx> {
                         let sibling_lp_kind = LpExtend(base_lp.clone(), mutbl,
                                                     LpInterior(opt_variant_id, field));
                         let sibling_lp = Rc::new(LoanPath::new(sibling_lp_kind, field_ty));
-                        self.add_assignment_helper(tcx, sibling_lp, assign_id,
-                                                   span);
+                        self.add_assignment_helper(tcx, sibling_lp, assign_id);
                     }
                     return;
                 }
             }
         }
 
-        self.add_assignment_helper(tcx, lp, assign_id, span);
+        self.add_assignment_helper(tcx, lp, assign_id);
     }
 
-    fn add_assignment_helper(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>,
+    fn add_assignment_helper(&self, tcx: TyCtxtAt<'a, 'tcx, 'tcx>,
                              lp: Rc<LoanPath<'tcx>>,
-                             assign_id: hir::ItemLocalId,
-                             span: Span) {
+                             assign_id: hir::ItemLocalId) {
         debug!("add_assignment(lp={:?}, assign_id={:?}", lp, assign_id);
 
-        let path_index = self.move_path(tcx, lp.clone());
+        let path_index = self.move_path(*tcx, lp.clone());
 
         let assignment = Assignment {
             path: path_index,
             id: assign_id,
-            span,
+            span: tcx.span,
         };
 
         if self.is_var_path(path_index) {
