@@ -22,7 +22,7 @@ use super::{Inherited, FnCtxt, potentially_plural_count};
 /// - `impl_m_span`: span to use for reporting errors
 /// - `trait_m`: the method in the trait
 /// - `impl_trait_ref`: the TraitRef corresponding to the trait implementation
-
+#[cfg_attr(not(stage0), allow(usage_of_tyctxt_and_span_args))]
 pub fn compare_impl_method<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                      impl_m: &ty::AssocItem,
                                      impl_m_span: Span,
@@ -73,6 +73,7 @@ pub fn compare_impl_method<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     }
 }
 
+#[cfg_attr(not(stage0), allow(usage_of_tyctxt_and_span_args))]
 fn compare_predicate_entailment<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                           impl_m: &ty::AssocItem,
                                           impl_m_span: Span,
@@ -355,6 +356,7 @@ fn compare_predicate_entailment<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     })
 }
 
+#[cfg_attr(not(stage0), allow(usage_of_tyctxt_and_span_args))]
 fn check_region_bounds_on_impl_method<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                                 span: Span,
                                                 impl_m: &ty::AssocItem,
@@ -495,6 +497,7 @@ fn extract_spans_for_error_reporting<'a, 'gcx, 'tcx>(infcx: &infer::InferCtxt<'a
     }
 }
 
+#[cfg_attr(not(stage0), allow(usage_of_tyctxt_and_span_args))]
 fn compare_self_type<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                impl_m: &ty::AssocItem,
                                impl_m_span: Span,
@@ -580,6 +583,7 @@ fn compare_self_type<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     Ok(())
 }
 
+#[cfg_attr(not(stage0), allow(usage_of_tyctxt_and_span_args))]
 fn compare_number_of_generics<'a, 'tcx>(
     tcx: TyCtxt<'a, 'tcx, 'tcx>,
     impl_: &ty::AssocItem,
@@ -695,6 +699,7 @@ fn compare_number_of_generics<'a, 'tcx>(
     }
 }
 
+#[cfg_attr(not(stage0), allow(usage_of_tyctxt_and_span_args))]
 fn compare_number_of_method_arguments<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                                 impl_m: &ty::AssocItem,
                                                 impl_m_span: Span,
@@ -951,6 +956,7 @@ fn compare_synthetic_generics<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     }
 }
 
+#[cfg_attr(not(stage0), allow(usage_of_tyctxt_and_span_args))]
 pub fn compare_const_impl<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                     impl_c: &ty::AssocItem,
                                     impl_c_span: Span,
