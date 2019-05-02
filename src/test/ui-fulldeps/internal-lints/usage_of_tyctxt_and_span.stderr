@@ -1,0 +1,15 @@
+error: using both `TyCtxt` and `Span` as arguments
+  --> $DIR/usage_of_tyctxt_and_span.rs:13:14
+   |
+LL | fn both(tcx: TyCtxt, span: Span) {}
+   |              ^^^^^^        ^^^^
+   |
+note: lint level defined here
+  --> $DIR/usage_of_tyctxt_and_span.rs:4:9
+   |
+LL | #![deny(usage_of_tyctxt_and_span_args)]
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: use `TyCtxtAt` instead
+
+error: aborting due to previous error
+

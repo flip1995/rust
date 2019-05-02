@@ -1,7 +1,10 @@
 //! Some lints that are only useful in the compiler or crates that use compiler internals, such as
 //! Clippy.
 
-use crate::hir::{GenericArg, HirId, MutTy, Mutability, Path, PathSegment, QPath, Ty, TyKind};
+use crate::hir::{
+    intravisit::FnKind, Body, FnDecl, GenericArg, HirId, MutTy, Mutability, Path, PathSegment,
+    QPath, Ty, TyKind,
+};
 use crate::lint::{
     EarlyContext, EarlyLintPass, LateContext, LateLintPass, LintArray, LintContext, LintPass,
 };
@@ -9,6 +12,7 @@ use errors::Applicability;
 use rustc_data_structures::fx::FxHashMap;
 use syntax::ast::Ident;
 use syntax::symbol::{sym, Symbol};
+use syntax_pos::{MultiSpan, Span};
 
 declare_lint! {
     pub DEFAULT_HASH_TYPES,
@@ -74,13 +78,51 @@ declare_lint! {
     "using `ty::{Ty,TyCtxt}` instead of importing it"
 }
 
+declare_lint! {
+    pub USAGE_OF_TYCTXT_AND_SPAN_ARGS,
+    Allow,
+    "using both `TyCtxt` and `Span` as arguments, instead of `TyCtxtAt`"
+}
+
 declare_lint_pass!(TyTyKind => [
-    USAGE_OF_TY_TYKIND,
     TY_PASS_BY_REFERENCE,
     USAGE_OF_QUALIFIED_TY,
+    USAGE_OF_TY_TYKIND,
+    USAGE_OF_TYCTXT_AND_SPAN_ARGS,
 ]);
 
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for TyTyKind {
+    fn check_fn(
+        &mut self,
+        cx: &LateContext<'a, 'tcx>,
+        _: FnKind<'tcx>,
+        fn_decl: &'tcx FnDecl,
+        _: &'tcx Body,
+        _: Span,
+        _: HirId,
+    ) {
+        fn_decl
+            .inputs
+            .iter()
+            .find(|ty| match_hir_ty_path(cx, ty, TYCTXT_PATH).is_some())
+            .and_then(|ty_ctxt| {
+                if let Some(span) = fn_decl.inputs.iter().find(|ty| {
+                    match_hir_ty_path(cx, ty, SPAN_PATH).is_some()
+                }) {
+                    let multi_span = MultiSpan::from_spans(vec![ty_ctxt.span, span.span]);
+                    cx.struct_span_lint(
+                        USAGE_OF_TYCTXT_AND_SPAN_ARGS,
+                        multi_span,
+                        "using both `TyCtxt` and `Span` as arguments",
+                    )
+                    .help("use `TyCtxtAt` instead")
+                    .emit();
+                }
+
+                Some(())
+            });
+    }
+
     fn check_path(&mut self, cx: &LateContext<'_, '_>, path: &'tcx Path, _: HirId) {
         let segments = path.segments.iter().rev().skip(1).rev();
 
@@ -182,26 +224,31 @@ fn lint_ty_kind_usage(cx: &LateContext<'_, '_>, segment: &PathSegment) -> bool {
     false
 }
 
+const SPAN_PATH: &[Symbol] = &[sym::syntax_pos, sym::span_encoding, sym::Span];
 const TYKIND_PATH: &[Symbol] = &[sym::rustc, sym::ty, sym::sty, sym::TyKind];
 const TY_PATH: &[Symbol] = &[sym::rustc, sym::ty, sym::Ty];
 const TYCTXT_PATH: &[Symbol] = &[sym::rustc, sym::ty, sym::context, sym::TyCtxt];
 
-fn is_ty_or_ty_ctxt(cx: &LateContext<'_, '_>, ty: &Ty) -> Option<String> {
-    match &ty.node {
-        TyKind::Path(qpath) => {
-            if let QPath::Resolved(_, path) = qpath {
-                let did = path.res.opt_def_id()?;
-                if cx.match_def_path(did, TY_PATH) {
-                    return Some(format!("Ty{}", gen_args(path.segments.last().unwrap())));
-                } else if cx.match_def_path(did, TYCTXT_PATH) {
-                    return Some(format!("TyCtxt{}", gen_args(path.segments.last().unwrap())));
-                }
+fn match_hir_ty_path(cx: &LateContext<'_, '_>, ty: &Ty, path: &[Symbol]) -> Option<String> {
+    if let TyKind::Path(qpath) = &ty.node {
+        if let QPath::Resolved(_, ty_path) = qpath {
+            let did = ty_path.res.opt_def_id()?;
+            if cx.match_def_path(did, path) {
+                return Some(format!(
+                    "{}{}",
+                    path.last().unwrap(),
+                    gen_args(ty_path.segments.last().unwrap())
+                ));
             }
         }
-        _ => {}
     }
 
     None
+}
+
+fn is_ty_or_ty_ctxt(cx: &LateContext<'_, '_>, ty: &Ty) -> Option<String> {
+    match_hir_ty_path(cx, ty, TY_PATH)
+        .or_else(|| match_hir_ty_path(cx, ty, TYCTXT_PATH))
 }
 
 fn gen_args(segment: &PathSegment) -> String {
