@@ -4,8 +4,6 @@
 ; git-subrepo command. See https://github.com/git-commands/git-subrepo#readme
 ;
 [subrepo]
-	remote = git@github.com:rust-lang/rust-clippy.git
-	branch = master
 	commit = 76ddac5e8e9f588fda939cf8ec116e5926419758
 	parent = 93b0ac32ce1c9510db8db8a8ae8000c42c465f5f
 	method = merge
