@@ -35,3 +35,6 @@ helper.txt
 *.iml
 .vscode
 .idea
+
+# For the subrepo in rust-lang/rust
+.gitrepo
