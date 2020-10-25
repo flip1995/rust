@@ -13,6 +13,7 @@
 #![feature(nll)]
 #![feature(min_specialization)]
 #![feature(option_expect_none)]
+#![feature(rustc_attrs)]
 
 #[macro_use]
 extern crate rustc_macros;

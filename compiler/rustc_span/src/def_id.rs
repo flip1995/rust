@@ -170,6 +170,7 @@ impl DefId {
         if self.is_local() { Some(LocalDefId { local_def_index: self.index }) } else { None }
     }
 
+    #[rustc_diagnostic_item = "expect_local"]
     #[inline]
     pub fn expect_local(self) -> LocalDefId {
         self.as_local().unwrap_or_else(|| panic!("DefId::expect_local: `{:?}` isn't local", self))
@@ -222,6 +223,7 @@ rustc_data_structures::define_id_collections!(DefIdMap, DefIdSet, DefId);
 /// few cases where we know that only DefIds from the local crate are expected
 /// and a DefId from a different crate would signify a bug somewhere. This
 /// is when LocalDefId comes in handy.
+#[rustc_diagnostic_item = "LocalDefId"]
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LocalDefId {
     pub local_def_index: DefIndex,
@@ -239,6 +241,7 @@ impl Idx for LocalDefId {
 }
 
 impl LocalDefId {
+    #[rustc_diagnostic_item = "to_def_id"]
     #[inline]
     pub fn to_def_id(self) -> DefId {
         DefId { krate: LOCAL_CRATE, index: self.local_def_index }
