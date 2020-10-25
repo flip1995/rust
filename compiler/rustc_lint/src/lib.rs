@@ -455,6 +455,8 @@ fn register_internals(store: &mut LintStore) {
     store.register_early_pass(|| box LintPassImpl);
     store.register_lints(&TyTyKind::get_lints());
     store.register_late_pass(|| box TyTyKind);
+    store.register_lints(&LocalDefIdExpectLocal::get_lints());
+    store.register_late_pass(|| box LocalDefIdExpectLocal);
     store.register_group(
         false,
         "rustc::internal",
@@ -463,6 +465,7 @@ fn register_internals(store: &mut LintStore) {
             LintId::of(DEFAULT_HASH_TYPES),
             LintId::of(USAGE_OF_TY_TYKIND),
             LintId::of(LINT_PASS_IMPL_WITHOUT_MACRO),
+            LintId::of(LOCAL_DEF_ID_EXPECT_LOCAL),
             LintId::of(TY_PASS_BY_REFERENCE),
             LintId::of(USAGE_OF_QUALIFIED_TY),
         ],

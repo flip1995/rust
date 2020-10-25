@@ -6,7 +6,9 @@ use rustc_ast::{Item, ItemKind};
 use rustc_data_structures::fx::FxHashMap;
 use rustc_errors::Applicability;
 use rustc_hir::def::Res;
-use rustc_hir::{GenericArg, HirId, MutTy, Mutability, Path, PathSegment, QPath, Ty, TyKind};
+use rustc_hir::{
+    Expr, ExprKind, GenericArg, HirId, MutTy, Mutability, Path, PathSegment, QPath, Ty, TyKind,
+};
 use rustc_middle::ty;
 use rustc_session::{declare_lint_pass, declare_tool_lint, impl_lint_pass};
 use rustc_span::hygiene::{ExpnKind, MacroKind};
@@ -261,6 +263,57 @@ impl EarlyLintPass for LintPassImpl {
                                     .emit();
                             },
                         )
+                    }
+                }
+            }
+        }
+    }
+}
+
+declare_tool_lint! {
+    pub rustc::LOCAL_DEF_ID_EXPECT_LOCAL,
+    Allow,
+    "converting a `LocalDefId` to a `DefId` and then calling `expect_local()`"
+}
+
+declare_lint_pass!(LocalDefIdExpectLocal => [LOCAL_DEF_ID_EXPECT_LOCAL]);
+
+impl LateLintPass<'_> for LocalDefIdExpectLocal {
+    fn check_expr(&mut self, cx: &LateContext<'_>, expr: &Expr<'_>) {
+        if let ExprKind::MethodCall(_, _, [expect_local_arg], _) = expr.kind {
+            if let ExprKind::MethodCall(_, to_def_id_span, [to_def_id_arg], _) =
+                expect_local_arg.kind
+            {
+                let typeck_results = cx.typeck_results();
+                if let ty::Adt(adt, _) = typeck_results.expr_ty(to_def_id_arg).kind() {
+                    if cx.tcx.is_diagnostic_item(Symbol::intern("LocalDefId"), adt.did) {
+                        if let Some(expect_local_def_id) =
+                            typeck_results.type_dependent_def_id(expr.hir_id)
+                        {
+                            if let Some(to_def_id_def_id) =
+                                typeck_results.type_dependent_def_id(expect_local_arg.hir_id)
+                            {
+                                if cx.tcx.is_diagnostic_item(
+                                    Symbol::intern("expect_local"),
+                                    expect_local_def_id,
+                                ) && cx.tcx.is_diagnostic_item(
+                                    Symbol::intern("to_def_id"),
+                                    to_def_id_def_id,
+                                ) {
+                                    let span = to_def_id_span.with_hi(expr.span.hi());
+                                    cx.struct_span_lint(LOCAL_DEF_ID_EXPECT_LOCAL, span, |lint| {
+                                        lint.build("unnecessary conversion of `LocalDefId`")
+                                            .span_suggestion(
+                                                span,
+                                                "remove these method calls",
+                                                String::new(),
+                                                Applicability::MachineApplicable,
+                                            )
+                                            .emit();
+                                    });
+                                }
+                            }
+                        }
                     }
                 }
             }
