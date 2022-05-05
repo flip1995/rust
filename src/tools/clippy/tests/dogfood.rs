@@ -9,16 +9,11 @@
 
 use std::path::PathBuf;
 use std::process::Command;
-use test_utils::IS_RUSTC_TEST_SUITE;
 
 mod test_utils;
 
 #[test]
 fn dogfood_clippy() {
-    if IS_RUSTC_TEST_SUITE {
-        return;
-    }
-
     // "" is the root package
     for package in &["", "clippy_dev", "clippy_lints", "clippy_utils", "rustc_tools_util"] {
         run_clippy_for_package(package);
