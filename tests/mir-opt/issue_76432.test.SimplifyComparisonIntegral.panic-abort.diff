@@ -5,7 +5,7 @@
       debug x => _1;
       let mut _0: ();
       let _2: &[T];
-      let _3: &[T; 3];
+      let mut _3: &[T; 3];
       let _4: [T; 3];
       let mut _8: !;
       scope 1 {
@@ -38,6 +38,7 @@
           // DBG: _5 = &(*_2)[0 of 3];
           // DBG: _6 = &(*_2)[1 of 3];
           // DBG: _7 = &(*_2)[2 of 3];
+          _0 = const ();
           StorageDead(_4);
           return;
       }
