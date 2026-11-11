@@ -32,7 +32,7 @@ use crate::mir::interpret::{AllocRange, Scalar};
 use crate::ty::codec::{TyDecoder, TyEncoder};
 use crate::ty::print::{FmtPrinter, Printer, pretty_print_const, with_no_trimmed_paths};
 use crate::ty::{
-    self, GenericArg, GenericArgsRef, Instance, InstanceKind, List, ShimKind, Ty, TyCtxt,
+    self, GenericArg, GenericArgs, Instance, InstanceKind, List, ShimKind, Ty, TyCtxt,
     TypeVisitableExt, TypingEnv, UserTypeAnnotationIndex,
 };
 
@@ -40,7 +40,6 @@ pub mod basic_blocks;
 mod consts;
 pub mod coverage;
 mod generic_graph;
-pub mod generic_graphviz;
 pub mod graphviz;
 pub mod interpret;
 pub mod pretty;
@@ -1347,11 +1346,33 @@ pub struct BasicBlockData<'tcx> {
 }
 
 impl<'tcx> BasicBlockData<'tcx> {
-    pub fn new(terminator: Option<Terminator<'tcx>>, is_cleanup: bool) -> BasicBlockData<'tcx> {
+    pub fn new(terminator: Terminator<'tcx>, is_cleanup: bool) -> BasicBlockData<'tcx> {
         BasicBlockData::new_stmts(Vec::new(), terminator, is_cleanup)
     }
 
     pub fn new_stmts(
+        statements: Vec<Statement<'tcx>>,
+        terminator: Terminator<'tcx>,
+        is_cleanup: bool,
+    ) -> BasicBlockData<'tcx> {
+        BasicBlockData {
+            statements,
+            after_last_stmt_debuginfos: StmtDebugInfos::default(),
+            terminator: Some(terminator),
+            is_cleanup,
+        }
+    }
+
+    /// This is being phased out. Use [`BasicBlockData::new`] instead.
+    pub fn maybe_unterminated(
+        terminator: Option<Terminator<'tcx>>,
+        is_cleanup: bool,
+    ) -> BasicBlockData<'tcx> {
+        BasicBlockData::maybe_unterminated_stmts(Vec::new(), terminator, is_cleanup)
+    }
+
+    /// This is being phased out. Use [`BasicBlockData::new_stmts`] instead.
+    pub fn maybe_unterminated_stmts(
         statements: Vec<Statement<'tcx>>,
         terminator: Option<Terminator<'tcx>>,
         is_cleanup: bool,
@@ -1695,7 +1716,7 @@ pub fn find_self_call<'tcx>(
     body: &Body<'tcx>,
     local: Local,
     block: BasicBlock,
-) -> Option<(DefId, GenericArgsRef<'tcx>)> {
+) -> Option<(DefId, GenericArgs<'tcx>)> {
     debug!("find_self_call(local={:?}): terminator={:?}", local, body[block].terminator);
     if let Some(Terminator { kind: TerminatorKind::Call { func, args, .. }, .. }) =
         &body[block].terminator

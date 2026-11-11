@@ -13,7 +13,7 @@ use rustc_ast::{
     PatKind, StmtKind, SyntheticAttr, TyKind, token,
 };
 use rustc_ast_pretty::pprust;
-use rustc_attr_ir::target::Target;
+use rustc_attr_ir::target::{AstTarget, Target};
 use rustc_attr_parsing::parser::AllowExprMetavar;
 use rustc_attr_parsing::{
     AttributeParser, AttributeSafety, CFG_TEMPLATE, EvalConfigResult, ShouldEmit,
@@ -2235,12 +2235,11 @@ impl<'a, 'b> InvocationCollector<'a, 'b> {
         let mut attrs = attrs.iter().peekable();
         let mut span: Option<Span> = None;
         while let Some(attr) = attrs.next() {
-            validate_attr::check_attr(&self.cx.sess.psess, attr);
             AttributeParser::parse_limited_all(
                 self.cx.sess,
                 slice::from_ref(attr),
                 None,
-                Target::MacroCall,
+                AstTarget::MacroCall,
                 call.span(),
                 self.cx.current_expansion.lint_node_id,
                 Some(self.cx.ecfg.features),
@@ -2305,7 +2304,7 @@ impl<'a, 'b> InvocationCollector<'a, 'b> {
             &attr,
             attr.span,
             self.cfg().lint_node_id,
-            node.as_target(),
+            AstTarget::None(node.as_target()),
             self.cfg().features,
             ShouldEmit::ErrorsAndLints { recovery: Recovery::Allowed },
             parse_cfg,

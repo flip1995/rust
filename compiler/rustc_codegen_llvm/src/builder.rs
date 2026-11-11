@@ -60,7 +60,7 @@ impl<'a, 'll, CX: Borrow<SCx<'ll>>> Drop for GenericBuilder<'a, 'll, CX> {
 impl<'a, 'll> SBuilder<'a, 'll> {
     pub(crate) fn call(
         &mut self,
-        llty: &'ll Type,
+        llty: Type<'ll>,
         llfn: &'ll Value,
         args: &[&'ll Value],
         funclet: Option<&Funclet<'ll>>,
@@ -116,11 +116,11 @@ impl<'a, 'll, CX: Borrow<SCx<'ll>>> GenericBuilder<'a, 'll, CX> {
         unsafe { self.llbuilder_raw.as_ref() }
     }
 
-    pub(crate) fn trunc(&mut self, val: &'ll Value, dest_ty: &'ll Type) -> &'ll Value {
+    pub(crate) fn trunc(&mut self, val: &'ll Value, dest_ty: Type<'ll>) -> &'ll Value {
         unsafe { llvm::LLVMBuildTrunc(self.llbuilder(), val, dest_ty, UNNAMED) }
     }
 
-    pub(crate) fn bitcast(&mut self, val: &'ll Value, dest_ty: &'ll Type) -> &'ll Value {
+    pub(crate) fn bitcast(&mut self, val: &'ll Value, dest_ty: Type<'ll>) -> &'ll Value {
         unsafe { llvm::LLVMBuildBitCast(self.llbuilder(), val, dest_ty, UNNAMED) }
     }
 
@@ -146,7 +146,8 @@ impl<'a, 'll, CX: Borrow<SCx<'ll>>> GenericBuilder<'a, 'll, CX> {
     // easily jump to the beginning of the function to place our allocas there. We trust the user
     // to manually do that. FIXME(offload): improve the genericCx and add more llvm wrappers to
     // handle this.
-    pub(crate) fn direct_alloca(&mut self, ty: &'ll Type, align: Align, name: &str) -> &'ll Value {
+    pub(crate) fn direct_alloca(&mut self, size: Size, align: Align, name: &str) -> &'ll Value {
+        let ty = self.cx.type_array(self.cx.type_i8(), size.bytes());
         let val = unsafe {
             let alloca = llvm::LLVMBuildAlloca(self.llbuilder(), ty, UNNAMED);
             llvm::LLVMSetAlignment(alloca, align.bytes() as c_uint);
@@ -154,18 +155,25 @@ impl<'a, 'll, CX: Borrow<SCx<'ll>>> GenericBuilder<'a, 'll, CX> {
             llvm::LLVMBuildPointerCast(self.llbuilder(), alloca, self.cx.type_ptr(), UNNAMED)
         };
         if name != "" {
-            let name = std::ffi::CString::new(name).unwrap();
             llvm::set_value_name(val, &name.as_bytes());
         }
         val
     }
 
-    pub(crate) fn inbounds_gep(
+    fn build_gep(
         &mut self,
-        ty: &'ll Type,
+        stride: Size,
         ptr: &'ll Value,
-        indices: &[&'ll Value],
+        index: &'ll Value,
+        flags: GEPNoWrapFlags,
     ) -> &'ll Value {
+        let ty = if stride.bytes() == 1 {
+            // LLVM prefers `i8` as the canonical form for a single-byte GEP.
+            self.cx.type_i8()
+        } else {
+            self.cx.type_array(self.cx.type_i8(), stride.bytes())
+        };
+        let indices = &[index];
         unsafe {
             llvm::LLVMBuildGEPWithNoWrapFlags(
                 self.llbuilder(),
@@ -174,7 +182,7 @@ impl<'a, 'll, CX: Borrow<SCx<'ll>>> GenericBuilder<'a, 'll, CX> {
                 indices.as_ptr(),
                 indices.len() as c_uint,
                 UNNAMED,
-                GEPNoWrapFlags::InBounds,
+                flags,
             )
         }
     }
@@ -189,7 +197,7 @@ impl<'a, 'll, CX: Borrow<SCx<'ll>>> GenericBuilder<'a, 'll, CX> {
         }
     }
 
-    pub(crate) fn load(&mut self, ty: &'ll Type, ptr: &'ll Value, align: Align) -> &'ll Value {
+    pub(crate) fn load(&mut self, ty: Type<'ll>, ptr: &'ll Value, align: Align) -> &'ll Value {
         unsafe {
             let load = llvm::LLVMBuildLoad2(self.llbuilder(), ty, ptr, UNNAMED);
             llvm::LLVMSetAlignment(load, align.bytes() as c_uint);
@@ -454,7 +462,7 @@ impl<'a, 'll, 'tcx> BuilderMethods<'a, 'tcx> for Builder<'a, 'll, 'tcx> {
 
     fn invoke(
         &mut self,
-        llty: &'ll Type,
+        llty: Type<'ll>,
         fn_attrs: Option<&CodegenFnAttrs>,
         fn_abi: Option<&FnAbi<'tcx, Ty<'tcx>>>,
         llfn: &'ll Value,
@@ -674,13 +682,7 @@ impl<'a, 'll, 'tcx> BuilderMethods<'a, 'tcx> for Builder<'a, 'll, 'tcx> {
     fn alloca(&mut self, size: Size, align: Align) -> &'ll Value {
         let mut bx = Builder::with_cx(self.cx);
         bx.position_at_start(unsafe { llvm::LLVMGetFirstBasicBlock(self.llfn()) });
-        let ty = self.cx().type_array(self.cx().type_i8(), size.bytes());
-        unsafe {
-            let alloca = llvm::LLVMBuildAlloca(bx.llbuilder(), ty, UNNAMED);
-            llvm::LLVMSetAlignment(alloca, align.bytes() as c_uint);
-            // Cast to default addrspace if necessary
-            llvm::LLVMBuildPointerCast(bx.llbuilder(), alloca, self.cx().type_ptr(), UNNAMED)
-        }
+        bx.direct_alloca(size, align, "")
     }
 
     fn alloca_with_ty(&mut self, layout: TyAndLayout<'tcx>) -> Self::Value {
@@ -690,12 +692,12 @@ impl<'a, 'll, 'tcx> BuilderMethods<'a, 'tcx> for Builder<'a, 'll, 'tcx> {
 
         unsafe {
             let alloca = llvm::LLVMBuildAlloca(bx.llbuilder(), scalable_vector_ty, UNNAMED);
-            llvm::LLVMSetAlignment(alloca, layout.align.abi.bytes() as c_uint);
+            llvm::LLVMSetAlignment(alloca, layout.align.bytes() as c_uint);
             alloca
         }
     }
 
-    fn load(&mut self, ty: &'ll Type, ptr: &'ll Value, align: Align) -> &'ll Value {
+    fn load(&mut self, ty: Type<'ll>, ptr: &'ll Value, align: Align) -> &'ll Value {
         unsafe {
             let load = llvm::LLVMBuildLoad2(self.llbuilder(), ty, ptr, UNNAMED);
             let align = align.min(self.cx().tcx.sess.target.max_reliable_alignment());
@@ -704,7 +706,7 @@ impl<'a, 'll, 'tcx> BuilderMethods<'a, 'tcx> for Builder<'a, 'll, 'tcx> {
         }
     }
 
-    fn volatile_load(&mut self, ty: &'ll Type, ptr: &'ll Value, align: Align) -> &'ll Value {
+    fn volatile_load(&mut self, ty: Type<'ll>, ptr: &'ll Value, align: Align) -> &'ll Value {
         unsafe {
             let load = self.load(ty, ptr, align);
             llvm::LLVMSetVolatile(load, llvm::TRUE);
@@ -714,7 +716,7 @@ impl<'a, 'll, 'tcx> BuilderMethods<'a, 'tcx> for Builder<'a, 'll, 'tcx> {
 
     fn atomic_load(
         &mut self,
-        ty: &'ll Type,
+        ty: Type<'ll>,
         ptr: &'ll Value,
         order: rustc_middle::ty::AtomicOrdering,
         volatile: bool,
@@ -876,17 +878,13 @@ impl<'a, 'll, 'tcx> BuilderMethods<'a, 'tcx> for Builder<'a, 'll, 'tcx> {
         self.set_metadata_node(load, llvm::MD_nonnull, &[]);
     }
 
-    fn store(&mut self, val: &'ll Value, ptr: &'ll Value, align: Align) -> &'ll Value {
-        self.store_with_flags(val, ptr, align, MemFlags::empty())
-    }
-
     fn store_with_flags(
         &mut self,
         val: &'ll Value,
         ptr: &'ll Value,
         align: Align,
         flags: MemFlags,
-    ) -> &'ll Value {
+    ) {
         debug!("Store {:?} -> {:?} ({:?})", val, ptr, flags);
         assert_eq!(self.cx.type_kind(self.cx.val_ty(ptr)), TypeKind::Pointer);
         unsafe {
@@ -937,7 +935,6 @@ impl<'a, 'll, 'tcx> BuilderMethods<'a, 'tcx> for Builder<'a, 'll, 'tcx> {
                 let md = llvm::LLVMMDNodeInContext2(self.cx.llcx, args.as_ptr(), args.len());
                 self.set_metadata(store, id, md);
             }
-            store
         }
     }
 
@@ -963,64 +960,24 @@ impl<'a, 'll, 'tcx> BuilderMethods<'a, 'tcx> for Builder<'a, 'll, 'tcx> {
         }
     }
 
-    fn gep(&mut self, ty: &'ll Type, ptr: &'ll Value, indices: &[&'ll Value]) -> &'ll Value {
-        unsafe {
-            llvm::LLVMBuildGEPWithNoWrapFlags(
-                self.llbuilder(),
-                ty,
-                ptr,
-                indices.as_ptr(),
-                indices.len() as c_uint,
-                UNNAMED,
-                GEPNoWrapFlags::default(),
-            )
-        }
+    fn gep(&mut self, stride: Size, ptr: &'ll Value, index: &'ll Value) -> &'ll Value {
+        self.build_gep(stride, ptr, index, GEPNoWrapFlags::default())
     }
 
-    fn inbounds_gep(
-        &mut self,
-        ty: &'ll Type,
-        ptr: &'ll Value,
-        indices: &[&'ll Value],
-    ) -> &'ll Value {
-        unsafe {
-            llvm::LLVMBuildGEPWithNoWrapFlags(
-                self.llbuilder(),
-                ty,
-                ptr,
-                indices.as_ptr(),
-                indices.len() as c_uint,
-                UNNAMED,
-                GEPNoWrapFlags::InBounds,
-            )
-        }
+    fn inbounds_gep(&mut self, stride: Size, ptr: &'ll Value, index: &'ll Value) -> &'ll Value {
+        self.build_gep(stride, ptr, index, GEPNoWrapFlags::InBounds)
     }
 
-    fn inbounds_nuw_gep(
-        &mut self,
-        ty: &'ll Type,
-        ptr: &'ll Value,
-        indices: &[&'ll Value],
-    ) -> &'ll Value {
-        unsafe {
-            llvm::LLVMBuildGEPWithNoWrapFlags(
-                self.llbuilder(),
-                ty,
-                ptr,
-                indices.as_ptr(),
-                indices.len() as c_uint,
-                UNNAMED,
-                GEPNoWrapFlags::InBounds | GEPNoWrapFlags::NUW,
-            )
-        }
+    fn inbounds_nuw_gep(&mut self, stride: Size, ptr: &'ll Value, index: &'ll Value) -> &'ll Value {
+        self.build_gep(stride, ptr, index, GEPNoWrapFlags::InBounds | GEPNoWrapFlags::NUW)
     }
 
     /* Casts */
-    fn trunc(&mut self, val: &'ll Value, dest_ty: &'ll Type) -> &'ll Value {
+    fn trunc(&mut self, val: &'ll Value, dest_ty: Type<'ll>) -> &'ll Value {
         unsafe { llvm::LLVMBuildTrunc(self.llbuilder(), val, dest_ty, UNNAMED) }
     }
 
-    fn unchecked_utrunc(&mut self, val: &'ll Value, dest_ty: &'ll Type) -> &'ll Value {
+    fn unchecked_utrunc(&mut self, val: &'ll Value, dest_ty: Type<'ll>) -> &'ll Value {
         debug_assert_ne!(self.val_ty(val), dest_ty);
 
         let trunc = self.trunc(val, dest_ty);
@@ -1032,7 +989,7 @@ impl<'a, 'll, 'tcx> BuilderMethods<'a, 'tcx> for Builder<'a, 'll, 'tcx> {
         trunc
     }
 
-    fn unchecked_strunc(&mut self, val: &'ll Value, dest_ty: &'ll Type) -> &'ll Value {
+    fn unchecked_strunc(&mut self, val: &'ll Value, dest_ty: Type<'ll>) -> &'ll Value {
         debug_assert_ne!(self.val_ty(val), dest_ty);
 
         let trunc = self.trunc(val, dest_ty);
@@ -1044,19 +1001,19 @@ impl<'a, 'll, 'tcx> BuilderMethods<'a, 'tcx> for Builder<'a, 'll, 'tcx> {
         trunc
     }
 
-    fn sext(&mut self, val: &'ll Value, dest_ty: &'ll Type) -> &'ll Value {
+    fn sext(&mut self, val: &'ll Value, dest_ty: Type<'ll>) -> &'ll Value {
         unsafe { llvm::LLVMBuildSExt(self.llbuilder(), val, dest_ty, UNNAMED) }
     }
 
-    fn fptoui_sat(&mut self, val: &'ll Value, dest_ty: &'ll Type) -> &'ll Value {
+    fn fptoui_sat(&mut self, val: &'ll Value, dest_ty: Type<'ll>) -> &'ll Value {
         self.call_intrinsic("llvm.fptoui.sat", &[dest_ty, self.val_ty(val)], &[val])
     }
 
-    fn fptosi_sat(&mut self, val: &'ll Value, dest_ty: &'ll Type) -> &'ll Value {
+    fn fptosi_sat(&mut self, val: &'ll Value, dest_ty: Type<'ll>) -> &'ll Value {
         self.call_intrinsic("llvm.fptosi.sat", &[dest_ty, self.val_ty(val)], &[val])
     }
 
-    fn fptoui(&mut self, val: &'ll Value, dest_ty: &'ll Type) -> &'ll Value {
+    fn fptoui(&mut self, val: &'ll Value, dest_ty: Type<'ll>) -> &'ll Value {
         // On WebAssembly the `fptoui` and `fptosi` instructions currently have
         // poor codegen. The reason for this is that the corresponding wasm
         // instructions, `i32.trunc_f32_s` for example, will trap when the float
@@ -1087,7 +1044,7 @@ impl<'a, 'll, 'tcx> BuilderMethods<'a, 'tcx> for Builder<'a, 'll, 'tcx> {
         unsafe { llvm::LLVMBuildFPToUI(self.llbuilder(), val, dest_ty, UNNAMED) }
     }
 
-    fn fptosi(&mut self, val: &'ll Value, dest_ty: &'ll Type) -> &'ll Value {
+    fn fptosi(&mut self, val: &'ll Value, dest_ty: Type<'ll>) -> &'ll Value {
         // see `fptoui` above for why wasm is different here
         if self.sess().target.is_like_wasm {
             let src_ty = self.cx.val_ty(val);
@@ -1105,35 +1062,35 @@ impl<'a, 'll, 'tcx> BuilderMethods<'a, 'tcx> for Builder<'a, 'll, 'tcx> {
         unsafe { llvm::LLVMBuildFPToSI(self.llbuilder(), val, dest_ty, UNNAMED) }
     }
 
-    fn uitofp(&mut self, val: &'ll Value, dest_ty: &'ll Type) -> &'ll Value {
+    fn uitofp(&mut self, val: &'ll Value, dest_ty: Type<'ll>) -> &'ll Value {
         unsafe { llvm::LLVMBuildUIToFP(self.llbuilder(), val, dest_ty, UNNAMED) }
     }
 
-    fn sitofp(&mut self, val: &'ll Value, dest_ty: &'ll Type) -> &'ll Value {
+    fn sitofp(&mut self, val: &'ll Value, dest_ty: Type<'ll>) -> &'ll Value {
         unsafe { llvm::LLVMBuildSIToFP(self.llbuilder(), val, dest_ty, UNNAMED) }
     }
 
-    fn fptrunc(&mut self, val: &'ll Value, dest_ty: &'ll Type) -> &'ll Value {
+    fn fptrunc(&mut self, val: &'ll Value, dest_ty: Type<'ll>) -> &'ll Value {
         unsafe { llvm::LLVMBuildFPTrunc(self.llbuilder(), val, dest_ty, UNNAMED) }
     }
 
-    fn fpext(&mut self, val: &'ll Value, dest_ty: &'ll Type) -> &'ll Value {
+    fn fpext(&mut self, val: &'ll Value, dest_ty: Type<'ll>) -> &'ll Value {
         unsafe { llvm::LLVMBuildFPExt(self.llbuilder(), val, dest_ty, UNNAMED) }
     }
 
-    fn ptrtoint(&mut self, val: &'ll Value, dest_ty: &'ll Type) -> &'ll Value {
+    fn ptrtoint(&mut self, val: &'ll Value, dest_ty: Type<'ll>) -> &'ll Value {
         unsafe { llvm::LLVMBuildPtrToInt(self.llbuilder(), val, dest_ty, UNNAMED) }
     }
 
-    fn inttoptr(&mut self, val: &'ll Value, dest_ty: &'ll Type) -> &'ll Value {
+    fn inttoptr(&mut self, val: &'ll Value, dest_ty: Type<'ll>) -> &'ll Value {
         unsafe { llvm::LLVMBuildIntToPtr(self.llbuilder(), val, dest_ty, UNNAMED) }
     }
 
-    fn bitcast(&mut self, val: &'ll Value, dest_ty: &'ll Type) -> &'ll Value {
+    fn bitcast(&mut self, val: &'ll Value, dest_ty: Type<'ll>) -> &'ll Value {
         unsafe { llvm::LLVMBuildBitCast(self.llbuilder(), val, dest_ty, UNNAMED) }
     }
 
-    fn intcast(&mut self, val: &'ll Value, dest_ty: &'ll Type, is_signed: bool) -> &'ll Value {
+    fn intcast(&mut self, val: &'ll Value, dest_ty: Type<'ll>, is_signed: bool) -> &'ll Value {
         unsafe {
             llvm::LLVMBuildIntCast2(
                 self.llbuilder(),
@@ -1145,7 +1102,7 @@ impl<'a, 'll, 'tcx> BuilderMethods<'a, 'tcx> for Builder<'a, 'll, 'tcx> {
         }
     }
 
-    fn pointercast(&mut self, val: &'ll Value, dest_ty: &'ll Type) -> &'ll Value {
+    fn pointercast(&mut self, val: &'ll Value, dest_ty: Type<'ll>) -> &'ll Value {
         unsafe { llvm::LLVMBuildPointerCast(self.llbuilder(), val, dest_ty, UNNAMED) }
     }
 
@@ -1255,7 +1212,7 @@ impl<'a, 'll, 'tcx> BuilderMethods<'a, 'tcx> for Builder<'a, 'll, 'tcx> {
         }
     }
 
-    fn vscale(&mut self, ty: &'ll Type) -> &'ll Value {
+    fn vscale(&mut self, ty: Type<'ll>) -> &'ll Value {
         unsafe { llvm::LLVMRustBuildVScale(self.llbuilder(), ty) }
     }
 
@@ -1268,7 +1225,7 @@ impl<'a, 'll, 'tcx> BuilderMethods<'a, 'tcx> for Builder<'a, 'll, 'tcx> {
         unsafe { llvm::LLVMBuildSelect(self.llbuilder(), cond, then_val, else_val, UNNAMED) }
     }
 
-    fn va_arg(&mut self, list: &'ll Value, ty: &'ll Type) -> &'ll Value {
+    fn va_arg(&mut self, list: &'ll Value, ty: Type<'ll>) -> &'ll Value {
         unsafe { llvm::LLVMBuildVAArg(self.llbuilder(), list, ty, UNNAMED) }
     }
 
@@ -1305,7 +1262,7 @@ impl<'a, 'll, 'tcx> BuilderMethods<'a, 'tcx> for Builder<'a, 'll, 'tcx> {
     }
 
     fn cleanup_landing_pad(&mut self, pers_fn: &'ll Value) -> (&'ll Value, &'ll Value) {
-        let ty = self.type_struct(&[self.type_ptr(), self.type_i32()], false);
+        let ty = self.type_struct(&[self.type_ptr(), self.type_i32()]);
         let landing_pad = self.landing_pad(ty, pers_fn, 0);
         unsafe {
             llvm::LLVMSetCleanup(landing_pad, llvm::TRUE);
@@ -1314,13 +1271,13 @@ impl<'a, 'll, 'tcx> BuilderMethods<'a, 'tcx> for Builder<'a, 'll, 'tcx> {
     }
 
     fn filter_landing_pad(&mut self, pers_fn: &'ll Value) {
-        let ty = self.type_struct(&[self.type_ptr(), self.type_i32()], false);
+        let ty = self.type_struct(&[self.type_ptr(), self.type_i32()]);
         let landing_pad = self.landing_pad(ty, pers_fn, 1);
         self.add_clause(landing_pad, self.const_array(self.type_ptr(), &[]));
     }
 
     fn resume(&mut self, exn0: &'ll Value, exn1: &'ll Value) {
-        let ty = self.type_struct(&[self.type_ptr(), self.type_i32()], false);
+        let ty = self.type_struct(&[self.type_ptr(), self.type_i32()]);
         let mut exn = self.const_poison(ty);
         exn = self.insert_value(exn, exn0, 0);
         exn = self.insert_value(exn, exn1, 1);
@@ -1477,7 +1434,7 @@ impl<'a, 'll, 'tcx> BuilderMethods<'a, 'tcx> for Builder<'a, 'll, 'tcx> {
 
     fn call(
         &mut self,
-        llty: &'ll Type,
+        llty: Type<'ll>,
         caller_attrs: Option<&CodegenFnAttrs>,
         fn_abi: Option<&FnAbi<'tcx, Ty<'tcx>>>,
         llfn: &'ll Value,
@@ -1567,7 +1524,7 @@ impl<'a, 'll, 'tcx> BuilderMethods<'a, 'tcx> for Builder<'a, 'll, 'tcx> {
         }
     }
 
-    fn zext(&mut self, val: &'ll Value, dest_ty: &'ll Type) -> &'ll Value {
+    fn zext(&mut self, val: &'ll Value, dest_ty: Type<'ll>) -> &'ll Value {
         unsafe { llvm::LLVMBuildZExt(self.llbuilder(), val, dest_ty, UNNAMED) }
     }
 
@@ -1727,11 +1684,7 @@ impl<'a, 'll, 'tcx> Builder<'a, 'll, 'tcx> {
             .val
             .store(&mut body_bx, PlaceRef::new_sized_aligned(current, cg_elem.layout, align));
 
-        let next = body_bx.inbounds_gep(
-            self.backend_type(cg_elem.layout),
-            current,
-            &[self.const_usize(1)],
-        );
+        let next = body_bx.inbounds_ptradd(current, self.const_usize(cg_elem.layout.size.bytes()));
         body_bx.br(header_bb);
         header_bx.add_incoming_to_phi(current, next, body_bb);
 
@@ -1848,7 +1801,7 @@ impl<'a, 'll, CX: Borrow<SCx<'ll>>> GenericBuilder<'a, 'll, CX> {
     pub(crate) fn check_call<'b>(
         &mut self,
         typ: &str,
-        fn_ty: &'ll Type,
+        fn_ty: Type<'ll>,
         llfn: &'ll Value,
         args: &'b [&'ll Value],
     ) -> Cow<'b, [&'ll Value]> {
@@ -1886,7 +1839,7 @@ impl<'a, 'll, CX: Borrow<SCx<'ll>>> GenericBuilder<'a, 'll, CX> {
         Cow::Owned(casted_args)
     }
 
-    pub(crate) fn va_arg(&mut self, list: &'ll Value, ty: &'ll Type) -> &'ll Value {
+    pub(crate) fn va_arg(&mut self, list: &'ll Value, ty: Type<'ll>) -> &'ll Value {
         unsafe { llvm::LLVMBuildVAArg(self.llbuilder(), list, ty, UNNAMED) }
     }
 }
@@ -1895,7 +1848,7 @@ impl<'a, 'll, 'tcx> Builder<'a, 'll, 'tcx> {
     pub(crate) fn call_intrinsic(
         &mut self,
         base_name: impl Into<Cow<'static, str>>,
-        type_params: &[&'ll Type],
+        type_params: &[Type<'ll>],
         args: &[&'ll Value],
     ) -> &'ll Value {
         let (ty, f) = self.cx.get_intrinsic(base_name.into(), type_params);
@@ -1922,7 +1875,7 @@ impl<'a, 'll, 'tcx> Builder<'a, 'll, 'tcx> {
 impl<'a, 'll, CX: Borrow<SCx<'ll>>> GenericBuilder<'a, 'll, CX> {
     pub(crate) fn phi(
         &mut self,
-        ty: &'ll Type,
+        ty: Type<'ll>,
         vals: &[&'ll Value],
         bbs: &[&'ll BasicBlock],
     ) -> &'ll Value {
@@ -1943,7 +1896,7 @@ impl<'a, 'll, CX: Borrow<SCx<'ll>>> GenericBuilder<'a, 'll, CX> {
 impl<'a, 'll, 'tcx> Builder<'a, 'll, 'tcx> {
     pub(crate) fn landing_pad(
         &mut self,
-        ty: &'ll Type,
+        ty: Type<'ll>,
         pers_fn: &'ll Value,
         num_clauses: usize,
     ) -> &'ll Value {
@@ -1958,7 +1911,7 @@ impl<'a, 'll, 'tcx> Builder<'a, 'll, 'tcx> {
 
     pub(crate) fn callbr(
         &mut self,
-        llty: &'ll Type,
+        llty: Type<'ll>,
         fn_attrs: Option<&CodegenFnAttrs>,
         fn_abi: Option<&FnAbi<'tcx, Ty<'tcx>>>,
         llfn: &'ll Value,

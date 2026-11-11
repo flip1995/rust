@@ -267,11 +267,7 @@ impl<'f, 'tcx> Coerce<'f, 'tcx> {
         }
 
         // Consider coercing the subtype to a DST
-        //
-        // NOTE: this is wrapped in a `commit_if_ok` because it creates
-        // a "spurious" type variable, and we don't want to have that
-        // type variable in memory if the coercion fails.
-        let unsize = self.commit_if_ok(|_| self.coerce_unsized(a, b));
+        let unsize = self.coerce_unsized(a, b);
         match unsize {
             Ok(_) => {
                 debug!("coerce: unsize successful");
@@ -520,25 +516,7 @@ impl<'f, 'tcx> Coerce<'f, 'tcx> {
             }
         };
 
-        if coerced_a == a && mt_a.mutbl.is_not() && autoderef.step_count() == 1 {
-            // As a special case, if we would produce `&'a *x`, that's
-            // a total no-op. We end up with the type `&'a T` just as
-            // we started with. In that case, just skip it altogether.
-            //
-            // Unfortunately, this can actually effect capture analysis
-            // which in turn means this effects borrow checking. This can
-            // also effect diagnostics.
-            // FIXME(BoxyUwU): we should always emit reborrow coercions
-            //
-            // Note that for `&mut`, we DO want to reborrow --
-            // otherwise, this would be a move, which might be an
-            // error. For example `foo(self.x)` where `self` and
-            // `self.x` both have `&mut `type would be a move of
-            // `self.x`, but we auto-coerce it to `foo(&mut *self.x)`,
-            // which is a borrow.
-            assert!(mutbl_b.is_not()); // can only coerce &T -> &U
-            return success(vec![], coerced_a, obligations);
-        }
+        let autoderef_step_count = autoderef.step_count();
 
         let InferOk { value: mut adjustments, obligations: o } =
             self.adjust_steps_as_infer_ok(&autoderef);
@@ -551,10 +529,55 @@ impl<'f, 'tcx> Coerce<'f, 'tcx> {
             coerced_a
         );
 
-        // Now apply the autoref
-        let mutbl = AutoBorrowMutability::new(mutbl_b, self.allow_two_phase);
-        adjustments
-            .push(Adjustment { kind: Adjust::Borrow(AutoBorrow::Ref(mutbl)), target: coerced_a });
+        // As a special case, if we would produce `&'a *x`, that's
+        // a total no-op. We end up with the type `&'a T` just as
+        // we started with. In that case, just skip it altogether.
+
+        let can_skip_noop_reborrow = if mutbl_b.is_not() {
+            if self.tcx.is_closure_like(self.body_def_id.to_def_id()) {
+                // FIXME: Inside a closure, reborrows can affect capture inference.
+                // So we have to keep the existing elision behavior stable.
+                // Ideally we wouldn't have to do this, as it makes lifetime
+                // annotations affect codegen.
+                // See `tests/ui/coercion/structural_identity_dependent_reborrows.rs`
+                coerced_a == a && autoderef_step_count == 1
+            } else {
+                if matches!(
+                    adjustments.last(),
+                    Some(Adjustment { kind: Adjust::Deref(DerefAdjustKind::Builtin), .. })
+                ) {
+                    // Last adjustment is a builtin deref adjustment.
+                    // Check if that deref was applied to a shared reference
+
+                    let mutbl_before_deref = if adjustments.len() >= 2 {
+                        *&adjustments[adjustments.len() - 2].target.ref_mutability()
+                    } else {
+                        Some(mt_a.mutbl)
+                    };
+
+                    mutbl_before_deref == Some(ty::Mutability::Not)
+                } else {
+                    // Last adjustment is not a builtin deref adjustment,
+                    // so this can't be a shared ref reborrow.
+                    false
+                }
+            }
+        } else {
+            // FIXME: Ideally we would also skip `&mut` -> `&mut` reborrow,
+            // and handle that in MIR.
+            false
+        };
+
+        if can_skip_noop_reborrow {
+            adjustments.pop();
+        } else {
+            // Now apply the autoref
+            let mutbl = AutoBorrowMutability::new(mutbl_b, self.allow_two_phase);
+            adjustments.push(Adjustment {
+                kind: Adjust::Borrow(AutoBorrow::Ref(mutbl)),
+                target: coerced_a,
+            });
+        }
 
         debug!("coerce_to_ref: succeeded coerced_a={:?} adjustments={:?}", coerced_a, adjustments);
 
@@ -589,8 +612,15 @@ impl<'f, 'tcx> Coerce<'f, 'tcx> {
         // and call arg (among other positions).
         //
         // These targets are known to never be RHS in `LHS: CoerceUnsized<RHS>`.
-        // That's because these are built-in types for which a core-provided impl
-        // doesn't exist, and for which a user-written impl is invalid.
+        // That's because one of the following is true.
+        // - For the built-in types, a core-provided impl doesn't exist and a
+        //   user-written impl is invalid.
+        // - For enums and unions, they can never be the target of a
+        //   `CoerceUnsized` impl.
+        // - For structs, they can only be the target of a `CoerceUnsized` impl
+        //   if `LHS` and `RHS` are instances of the same struct type but with
+        //   at least one differing field type. This is impossible when we
+        //   exclude structs with any generic args.
         //
         // This is technically incomplete when users write impossible bounds like
         // `where T: CoerceUnsized<usize>`, for example, but that trait is unstable
@@ -619,6 +649,11 @@ impl<'f, 'tcx> Coerce<'f, 'tcx> {
             | ty::CoroutineWitness(_, _)
             | ty::Never
             | ty::Tuple(_) => return Err(TypeError::Mismatch),
+            ty::Adt(adt, args) => match adt.adt_kind() {
+                ty::AdtKind::Enum | ty::AdtKind::Union => return Err(TypeError::Mismatch),
+                ty::AdtKind::Struct if args.is_empty() => return Err(TypeError::Mismatch),
+                _ => {}
+            },
             _ => {}
         }
         // `&str: CoerceUnsized<&str>` does not hold but is encountered frequently
@@ -642,85 +677,102 @@ impl<'f, 'tcx> Coerce<'f, 'tcx> {
         // a DST unless we have to. This currently comes out in the wash since
         // we can't unify [T] with U. But to properly support DST, we need to allow
         // that, at which point we will need extra checks on the target here.
+        //
+        // NOTE: this is wrapped in a `commit_if_ok` because it creates
+        // a "spurious" type variable, and we don't want to have that
+        // type variable in memory if the coercion fails.
+        self.commit_if_ok(|_| {
+            // Handle reborrows before selecting `Source: CoerceUnsized<Target>`.
+            let reborrow = match (source.kind(), target.kind()) {
+                // Don't emit a no-op shared -> shared reborrow.
+                (&ty::Ref(_, _, ty::Mutability::Not), &ty::Ref(_, _, ty::Mutability::Not))
+                    // FIXME: Inside a closure, reborrows can affect capture inference.
+                    // So we have to emit them anyway.
+                    // Ideally we wouldn't have to do this, it makes lifetime
+                    // annotations affect codegen
+                    if !self.tcx.is_closure_like(self.body_def_id.to_def_id()) =>
+                {
+                    None
+                }
+                (&ty::Ref(_, ty_a, mutbl_a), &ty::Ref(_, _, mutbl_b)) => {
+                    coerce_mutbls(mutbl_a, mutbl_b)?;
 
-        // Handle reborrows before selecting `Source: CoerceUnsized<Target>`.
-        let reborrow = match (source.kind(), target.kind()) {
-            (&ty::Ref(_, ty_a, mutbl_a), &ty::Ref(_, _, mutbl_b)) => {
-                coerce_mutbls(mutbl_a, mutbl_b)?;
+                    let coercion = RegionVariableOrigin::Coercion(self.cause.span);
+                    let r_borrow = self.next_region_var(coercion);
 
-                let coercion = RegionVariableOrigin::Coercion(self.cause.span);
-                let r_borrow = self.next_region_var(coercion);
+                    // We don't allow two-phase borrows here, at least for initial
+                    // implementation. If it happens that this coercion is a function argument,
+                    // the reborrow in coerce_borrowed_ptr will pick it up.
+                    let mutbl = AutoBorrowMutability::new(mutbl_b, AllowTwoPhase::No);
 
-                // We don't allow two-phase borrows here, at least for initial
-                // implementation. If it happens that this coercion is a function argument,
-                // the reborrow in coerce_borrowed_ptr will pick it up.
-                let mutbl = AutoBorrowMutability::new(mutbl_b, AllowTwoPhase::No);
+                    Some((
+                        Adjustment { kind: Adjust::Deref(DerefAdjustKind::Builtin), target: ty_a },
+                        Adjustment {
+                            kind: Adjust::Borrow(AutoBorrow::Ref(mutbl)),
+                            target: Ty::new_ref(self.tcx, r_borrow, ty_a, mutbl_b),
+                        },
+                    ))
+                }
+                (&ty::Ref(_, ty_a, mt_a), &ty::RawPtr(_, mt_b)) => {
+                    coerce_mutbls(mt_a, mt_b)?;
 
-                Some((
-                    Adjustment { kind: Adjust::Deref(DerefAdjustKind::Builtin), target: ty_a },
-                    Adjustment {
-                        kind: Adjust::Borrow(AutoBorrow::Ref(mutbl)),
-                        target: Ty::new_ref(self.tcx, r_borrow, ty_a, mutbl_b),
-                    },
-                ))
-            }
-            (&ty::Ref(_, ty_a, mt_a), &ty::RawPtr(_, mt_b)) => {
-                coerce_mutbls(mt_a, mt_b)?;
+                    Some((
+                        Adjustment { kind: Adjust::Deref(DerefAdjustKind::Builtin), target: ty_a },
+                        Adjustment {
+                            kind: Adjust::Borrow(AutoBorrow::RawPtr(mt_b)),
+                            target: Ty::new_ptr(self.tcx, ty_a, mt_b),
+                        },
+                    ))
+                }
+                _ => None,
+            };
+            let coerce_source = reborrow.as_ref().map_or(source, |(_, r)| r.target);
 
-                Some((
-                    Adjustment { kind: Adjust::Deref(DerefAdjustKind::Builtin), target: ty_a },
-                    Adjustment {
-                        kind: Adjust::Borrow(AutoBorrow::RawPtr(mt_b)),
-                        target: Ty::new_ptr(self.tcx, ty_a, mt_b),
-                    },
-                ))
-            }
-            _ => None,
-        };
-        let coerce_source = reborrow.as_ref().map_or(source, |(_, r)| r.target);
+            // Setup either a subtyping or a LUB relationship between
+            // the `CoerceUnsized` target type and the expected type.
+            // We only have the latter, so we use an inference variable
+            // for the former and let type inference do the rest.
+            let coerce_target = self.next_ty_var(self.cause.span);
 
-        // Setup either a subtyping or a LUB relationship between
-        // the `CoerceUnsized` target type and the expected type.
-        // We only have the latter, so we use an inference variable
-        // for the former and let type inference do the rest.
-        let coerce_target = self.next_ty_var(self.cause.span);
-
-        let mut coercion = self.unify_and(
-            coerce_target,
-            target,
-            reborrow.map(|(deref, autoref)| [deref, autoref]).into_flat_iter(),
-            Adjust::Pointer(PointerCoercion::Unsize),
-            ForceLeakCheck::No,
-        )?;
-
-        // Create an obligation for `Source: CoerceUnsized<Target>`.
-        let cause = self.cause(self.cause.span, ObligationCauseCode::Coercion { source, target });
-        let pred = ty::TraitRef::new(self.tcx, coerce_unsized_did, [coerce_source, coerce_target]);
-        let obligation = Obligation::new(self.tcx, cause, self.fcx.param_env, pred);
-
-        if self.next_trait_solver() {
-            coercion.obligations.push(obligation);
-
-            if self
-                .infcx
-                .visit_proof_tree(
-                    Goal::new(self.tcx, self.param_env, pred),
-                    &mut CoerceVisitor { fcx: self.fcx, span: self.cause.span, errored: false },
-                )
-                .is_break()
-            {
-                return Err(TypeError::Mismatch);
-            }
-        } else {
-            self.coerce_unsized_old_solver(
-                obligation,
-                &mut coercion,
-                coerce_unsized_did,
-                unsize_did,
+            let mut coercion = self.unify_and(
+                coerce_target,
+                target,
+                reborrow.map(|(deref, autoref)| [deref, autoref]).into_flat_iter(),
+                Adjust::Pointer(PointerCoercion::Unsize),
+                ForceLeakCheck::No,
             )?;
-        }
 
-        Ok(coercion)
+            // Create an obligation for `Source: CoerceUnsized<Target>`.
+            let cause =
+                self.cause(self.cause.span, ObligationCauseCode::Coercion { source, target });
+            let pred =
+                ty::TraitRef::new(self.tcx, coerce_unsized_did, [coerce_source, coerce_target]);
+            let obligation = Obligation::new(self.tcx, cause, self.fcx.param_env, pred);
+
+            if self.next_trait_solver() {
+                coercion.obligations.push(obligation);
+
+                if self
+                    .infcx
+                    .visit_proof_tree(
+                        Goal::new(self.tcx, self.param_env, pred),
+                        &mut CoerceVisitor { fcx: self.fcx, span: self.cause.span, errored: false },
+                    )
+                    .is_break()
+                {
+                    return Err(TypeError::Mismatch);
+                }
+            } else {
+                self.coerce_unsized_old_solver(
+                    obligation,
+                    &mut coercion,
+                    coerce_unsized_did,
+                    unsize_did,
+                )?;
+            }
+
+            Ok(coercion)
+        })
     }
 
     fn coerce_unsized_old_solver(
