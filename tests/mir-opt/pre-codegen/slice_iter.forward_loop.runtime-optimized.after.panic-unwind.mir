@@ -22,7 +22,7 @@ fn forward_loop(_1: &[T], _2: impl Fn(&T)) -> () {
             let _14: std::ptr::NonNull<T>;
             let mut _17: bool;
             let mut _20: usize;
-            let _22: &T;
+            let mut _22: &T;
             scope 17 {
                 let _13: *const T;
                 scope 18 {
@@ -195,6 +195,7 @@ fn forward_loop(_1: &[T], _2: impl Fn(&T)) -> () {
         StorageDead(_12);
         StorageDead(_15);
         StorageDead(_20);
+        _0 = const ();
         StorageDead(_23);
         drop(_2) -> [return: bb11, unwind continue];
     }
