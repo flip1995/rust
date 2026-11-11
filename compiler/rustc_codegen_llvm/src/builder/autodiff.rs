@@ -286,7 +286,7 @@ pub(crate) fn generate_enzyme_call<'ll, 'tcx>(
     bx: &mut Builder<'_, 'll, 'tcx>,
     fn_to_diff: &'ll Value,
     outer_name: &str,
-    ret_ty: &'ll Type,
+    ret_ty: Type<'ll>,
     fn_args: &[&'ll Value],
     attrs: &RustcAutodiff,
     dest_layout: ty::layout::TyAndLayout<'tcx>,
@@ -369,7 +369,7 @@ pub(crate) fn generate_enzyme_call<'ll, 'tcx>(
     let call = bx.call(enzyme_ty, None, None, ad_fn, ReturnSlot::Direct, &args, None, None);
 
     let fn_ret_ty = bx.cx.val_ty(call);
-    if fn_ret_ty == bx.cx.type_void() || fn_ret_ty == bx.cx.type_struct(&[], false) {
+    if fn_ret_ty == bx.cx.type_void() || fn_ret_ty == bx.cx.type_struct(&[]) {
         // If we return void or an empty struct, then our caller (due to how we generated it)
         // does not expect a return value. As such, we have no pointer (or place) into which
         // we could store our value, and would store into an undef, which would cause UB.

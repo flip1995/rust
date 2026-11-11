@@ -25,7 +25,6 @@ use rustc_abi::{CVariadicStatus, CanonAbi, ExternAbi, InterruptKind};
 use rustc_ast::visit::{AssocCtxt, BoundKind, FnCtxt, FnKind, Visitor, walk_list};
 use rustc_ast::*;
 use rustc_ast_pretty::pprust::{self, State};
-use rustc_attr_parsing::validate_attr;
 use rustc_data_structures::fx::FxIndexMap;
 use rustc_errors::{DiagCtxtHandle, Diagnostic, LintBuffer};
 use rustc_feature::Features;
@@ -519,34 +518,13 @@ impl<'a> AstValidator<'a> {
     }
 
     fn check_decl_attrs(&self, fn_inputs: &[Param]) {
-        use SyntheticAttr::*;
-        fn_inputs
-            .iter()
-            .flat_map(|i| i.attrs.as_ref())
-            .filter(|attr| match &attr.kind {
-                AttrKind::Normal(normal) => {
-                    let arr = [
-                        sym::allow,
-                        sym::deny,
-                        sym::expect,
-                        sym::forbid,
-                        sym::rustc_splat,
-                        sym::warn,
-                    ];
-                    !attr.has_any_name(&arr) && rustc_attr_parsing::is_builtin_attr(&normal.item)
-                }
-                AttrKind::Synthetic(CfgTrace(_) | CfgAttrTrace(_)) | AttrKind::Generated(..) => {
-                    false
-                }
-                AttrKind::DocComment(..) => true,
-            })
-            .for_each(|attr| {
+        for param in fn_inputs {
+            for attr in &param.attrs {
                 if attr.is_doc_comment() {
                     self.dcx().emit_err(diagnostics::FnParamDocComment { span: attr.span });
-                } else {
-                    self.dcx().emit_err(diagnostics::FnParamForbiddenAttr { span: attr.span });
                 }
-            });
+            }
+        }
     }
 
     fn check_decl_self_param(&self, fn_inputs: &[Param], self_semantic: SelfSemantic) {
@@ -1423,10 +1401,6 @@ fn validate_generic_param_order(dcx: DiagCtxtHandle<'_>, generics: &[GenericPara
 }
 
 impl Visitor<'_> for AstValidator<'_> {
-    fn visit_attribute(&mut self, attr: &Attribute) {
-        validate_attr::check_attr(&self.sess.psess, attr);
-    }
-
     fn visit_ty(&mut self, ty: &Ty) {
         self.visit_ty_common(ty);
         self.walk_ty(ty)

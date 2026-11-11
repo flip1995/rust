@@ -10,7 +10,6 @@ use rustc_abi::{AddressSpace, Align, Size, WrappingRange};
 use rustc_llvm::RustString;
 
 pub(crate) use self::CallConv::*;
-pub(crate) use self::CodeGenOptSize::*;
 pub(crate) use self::conversions::*;
 pub(crate) use self::ffi::*;
 pub(crate) use self::metadata_kind::*;
@@ -122,15 +121,15 @@ pub(crate) fn CreateDereferenceableOrNullAttr<'ll>(
     unsafe { LLVMRustCreateDereferenceableOrNullAttr(llcx, bytes) }
 }
 
-pub(crate) fn CreateByValAttr<'ll>(llcx: Context<'ll>, ty: &'ll Type) -> &'ll Attribute {
+pub(crate) fn CreateByValAttr<'ll>(llcx: Context<'ll>, ty: Type<'ll>) -> &'ll Attribute {
     unsafe { LLVMRustCreateByValAttr(llcx, ty) }
 }
 
-pub(crate) fn CreateByRefAttr<'ll>(llcx: Context<'ll>, ty: &'ll Type) -> &'ll Attribute {
+pub(crate) fn CreateByRefAttr<'ll>(llcx: Context<'ll>, ty: Type<'ll>) -> &'ll Attribute {
     unsafe { LLVMRustCreateByRefAttr(llcx, ty) }
 }
 
-pub(crate) fn CreateStructRetAttr<'ll>(llcx: Context<'ll>, ty: &'ll Type) -> &'ll Attribute {
+pub(crate) fn CreateStructRetAttr<'ll>(llcx: Context<'ll>, ty: Type<'ll>) -> &'ll Attribute {
     unsafe { LLVMRustCreateStructRetAttr(llcx, ty) }
 }
 
@@ -195,14 +194,6 @@ impl AttributePlace {
     }
 }
 
-#[derive(Copy, Clone, PartialEq)]
-#[repr(C)]
-pub(crate) enum CodeGenOptSize {
-    CodeGenOptSizeNone = 0,
-    CodeGenOptSizeDefault = 1,
-    CodeGenOptSizeAggressive = 2,
-}
-
 pub(crate) fn SetInstructionCallConv(instr: &Value, cc: CallConv) {
     unsafe {
         LLVMSetInstructionCallConv(instr, cc as c_uint);
@@ -220,7 +211,7 @@ pub(crate) fn SetFunctionCallConv(fn_: &Value, cc: CallConv) {
 // value's name as the comdat value to make sure that it is in a 1-to-1 relationship to the
 // function.
 // For more details on COMDAT sections see e.g., https://www.airs.com/blog/archives/52
-pub(crate) fn SetUniqueComdat(llmod: &Module, val: &Value) {
+pub(crate) fn SetUniqueComdat<'ll>(llmod: Module<'ll>, val: &'ll Value) {
     let name_buf = get_value_name(val);
     let name =
         CString::from_vec_with_nul(name_buf).or_else(|buf| CString::new(buf.into_bytes())).unwrap();
@@ -257,11 +248,17 @@ pub(crate) fn set_section(llglobal: &Value, section_name: &CStr) {
     }
 }
 
-pub(crate) fn add_global<'a>(llmod: &'a Module, ty: &'a Type, name_cstr: &CStr) -> &'a Value {
+pub(crate) fn add_global<'ll>(llmod: Module<'ll>, ty: Type<'ll>, name_cstr: &CStr) -> &'ll Value {
     unsafe { LLVMAddGlobal(llmod, ty, name_cstr.as_ptr()) }
 }
 
 pub(crate) fn set_initializer(llglobal: &Value, constant_val: &Value) {
+    unsafe {
+        assert_eq!(
+            crate::llvm::LLVMGlobalGetValueType(llglobal),
+            crate::llvm::LLVMTypeOf(constant_val)
+        );
+    }
     unsafe {
         LLVMSetInitializer(llglobal, constant_val);
     }
@@ -309,7 +306,7 @@ pub(crate) fn set_externally_initialized(llglobal: &Value, is_ext_init: bool) {
 ///
 /// Inserts the comdat into `llmod` if it does not exist.
 /// It is an error to call this if the target does not support comdat.
-pub(crate) fn set_comdat(llmod: &Module, llglobal: &Value, name: &CStr) {
+pub(crate) fn set_comdat<'ll>(llmod: Module<'ll>, llglobal: &'ll Value, name: &CStr) {
     unsafe {
         let comdat = LLVMGetOrInsertComdat(llmod, name.as_ptr());
         LLVMSetComdat(llglobal, comdat);
@@ -365,8 +362,8 @@ impl Intrinsic {
 
     pub(crate) fn get_declaration<'ll>(
         self,
-        llmod: &'ll Module,
-        type_params: &[&'ll Type],
+        llmod: Module<'ll>,
+        type_params: &[Type<'ll>],
     ) -> &'ll Value {
         unsafe {
             LLVMGetIntrinsicDeclaration(llmod, self.id, type_params.as_ptr(), type_params.len())
@@ -376,6 +373,7 @@ impl Intrinsic {
 
 /// Safe wrapper for `LLVMSetValueName2` from a byte slice
 pub(crate) fn set_value_name(value: &Value, name: &[u8]) {
+    assert!(!name.contains(&0));
     unsafe { LLVMSetValueName2(value, name.as_ptr(), name.len()) };
 }
 
@@ -440,8 +438,8 @@ impl Drop for OperandBundleBox<'_> {
     }
 }
 
-pub(crate) fn add_module_flag_u32(
-    module: &Module,
+pub(crate) fn add_module_flag_u32<'ll>(
+    module: Module<'ll>,
     merge_behavior: ModuleFlagMergeBehavior,
     key: &str,
     value: u32,
@@ -451,8 +449,8 @@ pub(crate) fn add_module_flag_u32(
     }
 }
 
-pub(crate) fn add_module_flag_str(
-    module: &Module,
+pub(crate) fn add_module_flag_str<'ll>(
+    module: Module<'ll>,
     merge_behavior: ModuleFlagMergeBehavior,
     key: &str,
     value: &str,
@@ -484,7 +482,7 @@ pub(crate) fn set_dso_local<'ll>(v: &'ll Value) {
 /// Safe wrapper for `LLVMRustAppendModuleInlineAsm`, which delegates to
 /// `Module::appendModuleInlineAsm`.
 pub(crate) fn append_module_inline_asm<'ll>(
-    llmod: &'ll Module,
+    llmod: Module<'ll>,
     asm: &[u8],
     target_features: &str,
     target_cpu: &str,
@@ -504,8 +502,8 @@ pub(crate) fn append_module_inline_asm<'ll>(
 
 /// Safe wrapper for `LLVMAddAlias2`
 pub(crate) fn add_alias<'ll>(
-    module: &'ll Module,
-    ty: &Type,
+    module: Module<'ll>,
+    ty: Type<'ll>,
     address_space: AddressSpace,
     aliasee: &Value,
     name: &CStr,

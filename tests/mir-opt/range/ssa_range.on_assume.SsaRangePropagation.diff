@@ -27,13 +27,14 @@
           _6 = copy _1;
           nop;
           StorageLive(_8);
-          _8 = &(*_2);
+          _8 = copy _2;
           _7 = PtrMetadata(copy _2);
           StorageDead(_8);
           _5 = Lt(copy _1, copy _7);
           nop;
           StorageDead(_6);
           assume(copy _5);
+          _4 = const ();
           nop;
           StorageDead(_4);
           _3 = const ();
